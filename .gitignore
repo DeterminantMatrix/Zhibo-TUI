@@ -1,0 +1,22 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*$py.class
+.codegraph/
+.reasonix/
+
+.vscode/
+.idea/
+
+*.log
+*.tmp
+*.bak
+
+# Local runtime data and credentials. Keep redacted *.example templates in Git.
+.env
+cookies.txt
+followers.csv
+followers.yaml
+settings.csv
+sports/rooms.yaml

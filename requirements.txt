@@ -1,0 +1,8 @@
+textual
+PyYAML
+httpx
+pycryptodome
+streamget
+streamlink
+yt-dlp
+pytest
