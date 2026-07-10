@@ -11,8 +11,6 @@ import shutil
 import subprocess
 import threading
 
-POTPLAYER_PATH = r"C:\Program Files\PotPlayer\PotPlayerMini64.exe"
-
 SW_HIDE = 0
 SW_SHOW = 5
 SW_RESTORE = 9
@@ -34,34 +32,33 @@ def is_mpv_available() -> bool:
     return shutil.which("mpv") is not None
 
 
-def is_potplayer_available(player_path: str = POTPLAYER_PATH) -> bool:
-    return Path(player_path).exists()
-
-
-def play_with_potplayer(stream_url: str, player_path: str = POTPLAYER_PATH) -> subprocess.Popen:
-    """Play a stream with PotPlayer."""
-    try:
-        return subprocess.Popen([player_path, stream_url])
-    except FileNotFoundError:
-        raise RuntimeError(f"未找到 PotPlayer：{player_path}") from None
-
-
 def play_url(
     stream_url: str,
     title: str = "",
     referrer: str = "",
     headers: dict[str, str] | None = None,
+    proxy_url: str = "",
+    use_cache: bool = False,
 ) -> subprocess.Popen:
     """Play a stream with mpv."""
-    cmd = [
-        "mpv",
-        stream_url,
-        "--no-cache",
+    cmd = ["mpv", stream_url]
+    if use_cache:
+        cmd.extend([
+            "--cache=yes",
+            "--demuxer-max-bytes=268435456",
+            "--demuxer-readahead-secs=15",
+        ])
+    else:
+        cmd.append("--no-cache")
+    cmd.extend([
         "--stream-lavf-o=reconnect=1",
         "--stream-lavf-o=reconnect_streamed=1",
-    ]
+    ])
     if title:
         cmd.append(f"--title={title}")
+
+    if proxy_url:
+        cmd.append(f"--http-proxy={proxy_url}")
 
     headers = headers or {}
     user_agent = headers.get("User-Agent")

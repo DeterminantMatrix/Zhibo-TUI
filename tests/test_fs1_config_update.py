@@ -112,11 +112,11 @@ def test_update_stream_libraries_runs_pip_upgrade(monkeypatch):
     ]
 
 
-def test_fs_proxy_is_direct_by_default(monkeypatch):
+def test_fs_proxy_is_always_direct(monkeypatch):
     monkeypatch.setenv("ZHIBO_PROXY", "http://127.0.0.1:7890")
 
     assert _configured_proxy({"proxy_url": "http://127.0.0.1:7890"}) is None
-    assert _configured_proxy({"fs_proxy_url": "http://127.0.0.1:7891"}) == "http://127.0.0.1:7891"
+    assert _configured_proxy({"fs_proxy_url": "http://127.0.0.1:7891"}) is None
 
 
 def test_fs1_enables_tls_verification_by_default(monkeypatch):

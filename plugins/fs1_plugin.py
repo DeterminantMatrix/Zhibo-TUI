@@ -215,9 +215,8 @@ def is_fs_site_url(url: str, cfg: dict | None = None) -> bool:
 
 
 def _configured_proxy(cfg: dict | None = None) -> str | None:
-    cfg = cfg or {}
-    proxy_url = (cfg.get("fs_proxy_url") or "").strip()
-    return proxy_url or None
+    """FS1 is domestic traffic and must always connect directly."""
+    return None
 
 
 def _as_bool(value, default: bool = True) -> bool:

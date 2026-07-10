@@ -106,7 +106,7 @@ def test_load_config_csv_table_format():
     fpath = f.name
     settings_path = Path(fpath).with_name("settings.csv")
     settings_path.write_text(
-        "key,value\npoll_interval,90\nnotifications_enabled,false\n",
+        "key,value\npoll_interval,90\nnotifications_enabled,false\nplatform_proxy.twitch,7897\nplatform_proxy.youtube,direct\n",
         encoding="utf-8",
     )
 
@@ -115,6 +115,7 @@ def test_load_config_csv_table_format():
         f1 = cfg.followers[0]
         assert cfg.poll_interval == 90
         assert cfg.notifications_enabled is False
+        assert cfg.platform_proxies == {"twitch": "7897", "youtube": "direct"}
         assert f1.tags == ["ASMR", "POE"]
         assert f1.fallback_plugins == ["streamget"]
         assert f1.extra == {"sport_id": "101"}

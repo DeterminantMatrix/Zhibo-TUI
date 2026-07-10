@@ -27,6 +27,7 @@ SHORTCUT_BUTTONS = [
     ("复制流", "copy_stream_url"),
     ("更新", "open_fs1_update"),
     ("下载", "download_video"),
+    ("代理", "open_proxy_settings"),
     ("复制选中", "copy_selection"),
     ("筛选", "cycle_state_filter"),
     ("托盘", "hide_to_tray"),
@@ -80,6 +81,17 @@ def _truncate(s: str, max_width: int) -> str:
 def _display_platform(platform: str) -> str:
     return PLATFORM_DISPLAY_NAMES.get(platform, platform)
 
+
+def _split_widths(available_width: int, ratio: float) -> tuple[int, int]:
+    """Return clamped left/right pane widths for the draggable divider."""
+    if available_width <= 0:
+        return 0, 0
+    minimum = min(24, max(1, available_width // 3))
+    left = round(available_width * ratio)
+    left = max(minimum, min(available_width - minimum, left))
+    return left, available_width - left
+
+
 def _web_url_for_follower(follower: Follower) -> str:
     url = follower.url
     if url.startswith(("http://", "https://")):
@@ -114,6 +126,31 @@ class StatusBar(Static):
 
 class SearchInput(Input):
     """搜索输入框"""
+
+
+class ColumnSplitter(Static):
+    """One-cell draggable separator between the table and log panes."""
+
+    def on_mouse_down(self, event) -> None:
+        if event.button != 1:
+            return
+        self.capture_mouse()
+        self.add_class("dragging")
+        self.app._resize_main_split(event.screen_x)  # type: ignore[attr-defined]
+        event.stop()
+
+    def on_mouse_move(self, event) -> None:
+        if self.app.mouse_captured is not self:
+            return
+        self.app._resize_main_split(event.screen_x)  # type: ignore[attr-defined]
+        event.stop()
+
+    def on_mouse_up(self, event) -> None:
+        if event.button != 1:
+            return
+        self.release_mouse()
+        self.remove_class("dragging")
+        event.stop()
 
 
 class ImportUrlScreen(ModalScreen[dict[str, str] | None]):
@@ -405,10 +442,102 @@ class UpdateScreen(ModalScreen[dict | None]):
         self.dismiss({"target": target, "curl": curl})
 
 
+class ProxySettingsScreen(ModalScreen[dict[str, str] | None]):
+    """Configure the local proxy independently for supported platforms."""
+
+    CSS = """
+    ProxySettingsScreen {
+        align: center middle;
+    }
+
+    #proxy_settings_box {
+        width: 62;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    .proxy_setting_row {
+        height: 3;
+    }
+
+    .proxy_platform_label {
+        width: 14;
+        content-align: left middle;
+    }
+
+    .proxy_setting_row Input {
+        width: 1fr;
+    }
+
+    #proxy_hint {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    #proxy_setting_buttons {
+        margin-top: 1;
+        height: 3;
+    }
+    """
+
+    PLATFORM_LABELS = {
+        "twitch": "Twitch",
+        "youtube": "YouTube",
+        "kick": "Kick",
+        "chzzk": "CHZZK",
+        "tiktok": "TikTok",
+        "twitcasting": "TwitCasting",
+    }
+
+    def __init__(self, proxies: dict[str, str] | None = None):
+        super().__init__()
+        self._proxies = proxies or {}
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="proxy_settings_box"):
+            yield Static("平台代理设置")
+            for platform, label in self.PLATFORM_LABELS.items():
+                with Horizontal(classes="proxy_setting_row"):
+                    yield Static(label, classes="proxy_platform_label")
+                    yield Input(
+                        value=self._proxies.get(platform, ""),
+                        placeholder="留空=默认 7890；direct=直连",
+                        id=f"proxy_{platform}",
+                    )
+            yield Static("可填写端口（如 7897）或完整代理地址；保存后立即生效。", id="proxy_hint")
+            with Horizontal(id="proxy_setting_buttons"):
+                yield Button("保存", id="save_proxy_settings", variant="primary")
+                yield Button("取消", id="cancel_proxy_settings")
+
+    def on_mount(self) -> None:
+        self.query_one("#proxy_twitch", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel_proxy_settings":
+            self.dismiss(None)
+            return
+        if event.button.id != "save_proxy_settings":
+            return
+        values = {
+            platform: self.query_one(f"#proxy_{platform}", Input).value.strip()
+            for platform in self.PLATFORM_LABELS
+        }
+        self.dismiss({platform: value for platform, value in values.items() if value})
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 class ZhiboApp(App):
     """直播监控 TUI 主应用"""
 
     CSS = """
+    Screen {
+        overflow: hidden;
+    }
+
     #main-area {
         height: 1fr;
     }
@@ -428,24 +557,38 @@ class ZhiboApp(App):
     }
 
     #table-area {
-        width: 3fr;
+        min-width: 24;
+        background: $surface;
     }
 
     #log-area {
-        width: 1fr;
-        border-left: solid $accent;
+        min-width: 24;
+        background: $surface;
+    }
+
+    #column_splitter {
+        width: 1;
+        min-width: 1;
+        height: 1fr;
+        background: $accent;
+    }
+
+    #column_splitter.dragging {
+        background: $warning;
     }
 
     LogPanel {
         height: 1fr;
+        width: 1fr;
         border: none;
         background: transparent;
-        padding: 0 1;
+        padding: 0;
+        margin: 0;
     }
 
     #download_progress {
         height: 1;
-        margin: 0 1;
+        margin: 0;
         display: none;
     }
 
@@ -485,7 +628,7 @@ class ZhiboApp(App):
         height: 3;
         border: solid $accent;
         padding: 0 1;
-        margin: 0 1 1 1;
+        margin: 0;
     }
 
     TabbedContent {
@@ -516,6 +659,7 @@ class ZhiboApp(App):
         Binding("x", "stop_player", "停止播放"),
         Binding("j", "import_url", "导入"),
         Binding("d", "download_video", "下载视频"),
+        Binding("p", "open_proxy_settings", "代理"),
         Binding("h", "hide_to_tray", "隐藏托盘"),
         Binding("o", "cycle_state_filter", "筛选状态"),
         Binding("enter", "play_selected", "播放"),
@@ -543,6 +687,7 @@ class ZhiboApp(App):
         self._last_log_text = ""
         self._restart_required = False
         self._next_poll_at: datetime | None = None
+        self._main_split_ratio = 0.75
         self._tray_icon = None
         self._minimize_monitor = None
         self._file_logger = get_logger("zhibo.ui")
@@ -569,16 +714,12 @@ class ZhiboApp(App):
         return self._current_tag or "全部"
 
     def _check_mpv_available(self) -> None:
-        from desktop import is_mpv_available, is_potplayer_available
+        from desktop import is_mpv_available
 
         if is_mpv_available():
-            self._add_log("mpv 检测通过")
+            self._add_log("mpv 检测通过（按 i 显示播放信息，I 固定显示）")
         else:
             self._add_log("警告：未找到 mpv，播放功能不可用")
-        if is_potplayer_available():
-            self._add_log("PotPlayer 检测通过")
-        else:
-            self._add_log("警告：未找到 PotPlayer，Twitch 播放功能不可用")
 
     def _update_status_bar(self) -> None:
         try:
@@ -610,8 +751,9 @@ class ZhiboApp(App):
                     for tag in self._tags:
                         with TabPane(tag, id=self._tab_id(tag)):
                             yield LiveTable(id=self._table_id(tag))
+            yield ColumnSplitter(id="column_splitter")
             with Vertical(id="log-area"):
-                yield LogPanel(id="log_panel", max_lines=500)
+                yield LogPanel(id="log_panel", max_lines=500, min_width=1, wrap=True)
                 yield ProgressBar(id="download_progress", total=100, show_eta=False)
                 yield SearchInput(placeholder="输入主播、平台、标签或标题过滤...", id="search_input")
         yield StatusBar(id="status_bar")
@@ -639,7 +781,29 @@ class ZhiboApp(App):
         self._start_tray_icon()
         self.set_interval(1, self._update_status_bar)
         self._poll_task = asyncio.create_task(self._monitor.run())
+        self.call_after_refresh(self._apply_main_split)
         self._update_status_bar()
+
+    def on_resize(self, event=None) -> None:
+        """Keep the user-selected ratio when the terminal is resized."""
+        self.call_after_refresh(self._apply_main_split)
+
+    def _resize_main_split(self, screen_x: int) -> None:
+        main_area = self.query_one("#main-area", Horizontal)
+        available_width = max(1, main_area.region.width - 1)
+        relative_x = screen_x - main_area.region.x
+        self._main_split_ratio = max(0.0, min(1.0, relative_x / available_width))
+        self._apply_main_split()
+
+    def _apply_main_split(self) -> None:
+        try:
+            main_area = self.query_one("#main-area", Horizontal)
+            available_width = main_area.region.width - 1
+            table_width, log_width = _split_widths(available_width, self._main_split_ratio)
+            self.query_one("#table-area", Vertical).styles.width = table_width
+            self.query_one("#log-area", Vertical).styles.width = log_width
+        except Exception:
+            pass
 
     def _start_tray_icon(self) -> None:
         from desktop import MinimizeToTrayMonitor, TrayIcon, remember_terminal_window
@@ -1103,6 +1267,21 @@ class ZhiboApp(App):
         """打开程序内更新弹窗。"""
         self.push_screen(UpdateScreen(), self._handle_update)
 
+    def action_open_proxy_settings(self) -> None:
+        """打开按平台配置的代理设置。"""
+        self.push_screen(ProxySettingsScreen(self._monitor.cfg.platform_proxies), self._handle_proxy_settings)
+
+    def _handle_proxy_settings(self, proxies: dict[str, str] | None) -> None:
+        if proxies is None:
+            return
+        from proxy_config import set_platform_proxies
+
+        self._monitor.cfg.platform_proxies = proxies
+        self._monitor.config_manager.save_config(self._monitor.cfg)
+        set_platform_proxies(proxies)
+        description = ", ".join(f"{platform}={value}" for platform, value in sorted(proxies.items()))
+        self._add_log(f"平台代理设置已保存：{description or '全部使用默认 7890'}")
+
     def _handle_update(self, data: dict | None) -> None:
         if not data:
             return
@@ -1235,26 +1414,26 @@ class ZhiboApp(App):
             self._add_log("当前没有运行中的 mpv")
 
     async def _play(self, idx: int) -> None:
-        from desktop import play_url, play_with_potplayer
+        from desktop import play_url
+        from proxy_config import proxy_for_platform
+
         status = self._monitor.followers[idx]
         try:
             stream_info = await self._monitor.get_stream_info(idx)
             stream_url = stream_info.flv_url or stream_info.m3u8_url or stream_info.stream_url
             if self._stop_player_process():
                 self._add_log("已停止上一条播放")
-            platform = status.follower.platform.casefold() if status.follower.platform else ""
-            if platform in ("twitch", "youtube"):
-                player_name = "PotPlayer"
-                self._add_log("获取流地址成功，启动 PotPlayer...")
-                self._player_process = play_with_potplayer(stream_url)
-            else:
-                player_name = "mpv"
-                self._add_log("获取流地址成功，启动 mpv...")
-                self._player_process = play_url(
-                    stream_url,
-                    title=f"{status.follower.name} - Zhibo",
-                    headers=stream_info.extra.get("headers", {}),
-                )
+            player_name = "mpv"
+            proxy_url = proxy_for_platform(status.follower.platform)
+            proxy_hint = f"，代理 {proxy_url}" if proxy_url else "，直连"
+            self._add_log(f"获取流地址成功，启动 mpv{proxy_hint}...")
+            self._player_process = play_url(
+                stream_url,
+                title=f"{status.follower.name} - Zhibo",
+                headers=stream_info.extra.get("headers", {}),
+                proxy_url=proxy_url or "",
+                use_cache=True,
+            )
             await asyncio.sleep(1)
             if self._player_process.poll() is not None:
                 code = self._player_process.returncode

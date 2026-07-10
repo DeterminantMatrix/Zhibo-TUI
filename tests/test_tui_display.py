@@ -1,4 +1,4 @@
-from ui.app import COL_WIDTHS, ZhiboApp, _display_platform, _update_fs1_script_path, _web_url_for_follower
+from ui.app import COL_WIDTHS, ProxySettingsScreen, ZhiboApp, _display_platform, _split_widths, _update_fs1_script_path, _web_url_for_follower
 from models import Follower
 
 def test_fs1_platform_displays_as_feisu():
@@ -32,4 +32,16 @@ def test_update_fs1_shortcut_target_exists():
 
     assert "c" in keys
     assert "u" in keys
+    assert "p" in keys
     assert _update_fs1_script_path().exists()
+
+
+def test_proxy_settings_supports_twitch_and_youtube():
+    assert "twitch" in ProxySettingsScreen.PLATFORM_LABELS
+    assert "youtube" in ProxySettingsScreen.PLATFORM_LABELS
+
+
+def test_split_widths_preserves_minimum_width_for_both_panes():
+    assert _split_widths(100, 0.75) == (75, 25)
+    assert _split_widths(100, 0.99) == (76, 24)
+    assert _split_widths(100, 0.01) == (24, 76)

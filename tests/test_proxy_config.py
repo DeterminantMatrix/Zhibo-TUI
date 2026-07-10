@@ -2,7 +2,7 @@ import asyncio
 
 from plugins import streamget_plugin
 from plugins.streamget_plugin import StreamgetPlugin
-from proxy_config import DEFAULT_PROXY_URL, proxy_for_platform
+from proxy_config import DEFAULT_PROXY_URL, proxy_for_platform, set_platform_proxies
 
 
 def test_foreign_platforms_use_default_proxy(monkeypatch):
@@ -55,3 +55,15 @@ def test_streamget_passes_proxy_only_for_foreign_platforms(monkeypatch):
     asyncio.run(StreamgetPlugin().check_live("https://www.huya.com/example", platform="huya"))
 
     assert captured == ["http://127.0.0.1:7890", None]
+
+
+def test_platform_proxy_override_accepts_port_and_direct(monkeypatch):
+    monkeypatch.delenv("ZHIBO_TWITCH_PROXY", raising=False)
+    monkeypatch.delenv("ZHIBO_YOUTUBE_PROXY", raising=False)
+    set_platform_proxies({"twitch": "7897", "youtube": "direct"})
+
+    try:
+        assert proxy_for_platform("twitch") == "http://127.0.0.1:7897"
+        assert proxy_for_platform("youtube") is None
+    finally:
+        set_platform_proxies({})

@@ -8,6 +8,7 @@ from plugins.base import LiveInfo, LiveStreamPlugin
 from plugins import get_plugin
 from config import ConfigManager
 from models import Follower, AppConfig
+from proxy_config import set_platform_proxies
 
 
 @dataclass
@@ -30,6 +31,7 @@ class MonitorService:
     def __init__(self, config_path: str | None = None):
         self.config_manager = ConfigManager(config_path)
         self.cfg: AppConfig = self.config_manager.load_config()
+        set_platform_proxies(self.cfg.platform_proxies)
         self.poll_interval = self.cfg.poll_interval
         self.max_concurrent_checks = self.cfg.max_concurrent_checks
         self.failure_backoff_after = self.cfg.failure_backoff_after

@@ -31,6 +31,7 @@ TOP_CONFIG_DEFAULTS = {
     "failure_backoff_after": 3,
     "failure_backoff_polls": 2,
     "notifications_enabled": True,
+    "platform_proxies": {},
 }
 
 
@@ -115,6 +116,22 @@ def _base_config(data: dict | None = None, settings_path: Path | None = None) ->
                 if key:
                     data[key] = row.get("value", "")
 
+    platform_proxies = data.get("platform_proxies", {})
+    if not isinstance(platform_proxies, dict):
+        platform_proxies = {}
+    platform_proxies = {
+        str(platform).strip().casefold(): _clean_text(value)
+        for platform, value in platform_proxies.items()
+        if _clean_text(platform) and _clean_text(value)
+    }
+    for key, value in data.items():
+        if not str(key).startswith("platform_proxy."):
+            continue
+        platform = str(key).split(".", 1)[1].strip().casefold()
+        proxy_value = _clean_text(value)
+        if platform and proxy_value:
+            platform_proxies[platform] = proxy_value
+
     return {
         "poll_interval": _clean_int(data.get("poll_interval"), default=TOP_CONFIG_DEFAULTS["poll_interval"]),
         "max_concurrent_checks": _clean_int(
@@ -133,6 +150,7 @@ def _base_config(data: dict | None = None, settings_path: Path | None = None) ->
             data.get("notifications_enabled"),
             default=TOP_CONFIG_DEFAULTS["notifications_enabled"],
         ),
+        "platform_proxies": platform_proxies,
     }
 
 
@@ -284,9 +302,11 @@ class ConfigManager:
             "failure_backoff_polls": cfg.failure_backoff_polls,
             "notifications_enabled": cfg.notifications_enabled,
         }
-        for key in TOP_CONFIG_DEFAULTS:
-            if key in cfg_dict:
-                rows.append({"key": key, "value": str(cfg_dict[key]).lower() if isinstance(cfg_dict[key], bool) else cfg_dict[key]})
+        for key, value in cfg_dict.items():
+            rows.append({"key": key, "value": str(value).lower() if isinstance(value, bool) else value})
+        for platform, value in sorted(cfg.platform_proxies.items()):
+            if _clean_text(platform) and _clean_text(value):
+                rows.append({"key": f"platform_proxy.{platform}", "value": value})
         def write_settings(f) -> None:
             writer = csv.DictWriter(f, fieldnames=["key", "value"])
             writer.writeheader()
@@ -317,6 +337,7 @@ class ConfigManager:
             "failure_backoff_after": cfg.failure_backoff_after,
             "failure_backoff_polls": cfg.failure_backoff_polls,
             "notifications_enabled": cfg.notifications_enabled,
+            "platform_proxies": cfg.platform_proxies,
         }
         for key in top_keys:
             if key in cfg_dict:

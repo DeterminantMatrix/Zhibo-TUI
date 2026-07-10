@@ -21,4 +21,5 @@ class AppConfig:
     failure_backoff_after: int = 3
     failure_backoff_polls: int = 2
     notifications_enabled: bool = True
+    platform_proxies: dict[str, str] = field(default_factory=dict)
     followers: list[Follower] = field(default_factory=list)

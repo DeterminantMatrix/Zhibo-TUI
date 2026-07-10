@@ -7,7 +7,7 @@
 - 监控斗鱼、虎牙、抖音、B 站、Twitch、YouTube、小红书与 FS1 等直播源
 - 标签页、搜索和在线 / 离线 / 异常状态筛选
 - 多插件回退：streamlink、streamget、yt-dlp 与 FS1 专用插件
-- 开播通知、Windows 托盘、mpv / PotPlayer 播放
+- 开播通知、Windows 托盘、mpv 播放
 - 从直播间 URL 导入关注项，以及 YouTube 格式选择下载
 
 ## 安装
@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-播放普通直播需要将 `mpv` 加入 `PATH`；Twitch / YouTube 也可使用 PotPlayer。
+播放需要将 `mpv` 加入 `PATH`。所有平台统一使用 mpv，并自动应用该平台的代理和直播缓冲参数。
 
 ## 配置关注列表
 
@@ -46,7 +46,7 @@ notifications_enabled,true
 
 ## 代理
 
-Twitch、YouTube 等国际平台默认通过 `http://127.0.0.1:7890` 代理。可用环境变量覆盖：
+仅 Twitch、YouTube、Kick、CHZZK、TikTok 与 TwitCasting 默认通过 `http://127.0.0.1:7890` 代理；哔哩哔哩、斗鱼、虎牙、抖音、小红书与 FS1 一律直连。可用环境变量覆盖：
 
 ```powershell
 # 使用其它代理端口
@@ -55,6 +55,8 @@ $env:ZHIBO_PLATFORM_PROXY = "http://127.0.0.1:7897"
 # 当前会话强制直连
 $env:ZHIBO_PLATFORM_PROXY = "direct"
 ```
+
+也可在 TUI 底栏点击“代理”或按 `p`，分别为 Twitch、YouTube、Kick、CHZZK、TikTok 和 TwitCasting 设置端口。输入 `7897` 会使用 `http://127.0.0.1:7897`；输入 `direct` 可让该平台直连。
 
 ## 快捷键
 
@@ -69,6 +71,8 @@ $env:ZHIBO_PLATFORM_PROXY = "direct"
 | `j` | 导入直播间 URL |
 | `h` | 隐藏至托盘 |
 | `t` | 退出 |
+
+在 mpv 播放窗口中按 `i` 可切换播放信息（编码、分辨率、码率、丢帧等）；按 `I` 可让信息持续显示。
 
 ## 本机敏感文件
 
