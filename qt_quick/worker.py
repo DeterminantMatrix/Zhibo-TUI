@@ -249,6 +249,10 @@ class QuickMonitorThread:
     def _thread_main(self) -> None:
         try:
             asyncio.run(self._run())
+        except SystemExit as exc:
+            # 配置加载失败走 sys.exit；无控制台的打包版必须转成可见的致命错误。
+            message = str(exc.code) if exc.code not in (None, 0) else "监控线程请求退出"
+            self.bridge.fatal.emit(redact_sensitive_text(message))
         except Exception as exc:
             self.bridge.fatal.emit(redact_sensitive_text(str(exc) or "监控线程启动失败"))
         finally:
@@ -1064,6 +1068,8 @@ class QuickMonitorThread:
             self.bridge.log.emit(f"FS1 {key}: {redact_sensitive_text(value)}")
 
     async def _update_package(self, package: str) -> None:
+        if getattr(sys, "frozen", False):
+            raise RuntimeError("打包版不能在程序内更新 Python 组件，请下载新版程序覆盖安装")
         self.bridge.progress.emit("update", 15.0, f"正在更新 {package}…")
         kwargs: dict[str, Any] = {
             "stdout": asyncio.subprocess.PIPE,

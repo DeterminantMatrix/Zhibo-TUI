@@ -17,7 +17,9 @@ COMMAND_SHOW = "show"
 
 def instance_key() -> str:
     """Return a stable key for this project checkout."""
-    return str(Path(__file__).resolve().parent.parent).casefold()
+    from zhibo import app_root
+
+    return str(app_root()).casefold()
 
 
 def _port_for_key(key: str) -> int:

@@ -138,6 +138,22 @@ $env:ZHIBO_LOG_FILE = "D:\PrivateData\Zhibo\logs\zhibo.log"
 
 浏览器脚本不能读取 HttpOnly Cookie，也不能可靠地读取浏览器自动附加但未由页面显式设置的 `Cookie` 请求头；这不会影响当前 FS1 主要使用的 `authorization` 请求头捕获。授权数据只通过剪贴板交给本机更新窗口，不开放常驻 localhost 接收端。不要把导出的 JSON 发给他人；如果已经泄露授权令牌，应先在 FS1 端注销或重新登录。
 
+## 打包成 exe（PyInstaller）
+
+单文件夹模式（多进程隔离子进程共享同一份文件，启动快、误报少）：
+
+```powershell
+python -m pip install -r requirements-dev.txt   # 含 pyinstaller
+.\.venv\Scripts\python.exe -m PyInstaller Zhibo.spec --noconfirm
+```
+
+产物在 `dist\Zhibo\Zhibo.exe`（约 460MB，含 PySide6 与全部插件）。使用要点：
+
+- `followers.csv` / `settings.csv` 放在 **exe 同目录**；首次运行会自动生成可编辑的模板
+- Cookie、FS1 配置、日志仍在用户私有目录 `%LOCALAPPDATA%\Zhibo`，与源码版共用
+- 打包版内不能程序内更新 Python 组件（更新中心会提示改用新版程序覆盖）；mpv/ffmpeg/uosc 便携工具安装不受影响
+- 双击 `Zhibo.exe` 即启动；`Zhibo.exe --smoke-test` 可做无人值守自检
+
 ## 测试
 
 ```powershell

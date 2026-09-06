@@ -162,7 +162,9 @@ class CredentialMigrationResult:
 
 
 def _legacy_project_root(project_root: Path | None) -> Path:
-    return (Path(project_root) if project_root is not None else Path(__file__).resolve().parent.parent).expanduser()
+    from zhibo import app_root
+
+    return (Path(project_root) if project_root is not None else app_root()).expanduser()
 
 
 def _legacy_source_safety(project_root: Path, source: Path) -> str | None:

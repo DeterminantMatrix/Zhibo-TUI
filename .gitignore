@@ -6,6 +6,10 @@ __pycache__/
 .codegraph/
 .reasonix/
 
+# PyInstaller 构建产物（spec 文件本身需要提交）
+build/
+dist/
+
 .vscode/
 .idea/
 

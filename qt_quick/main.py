@@ -11,7 +11,12 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 打包后数据（实例锁 key）锚定 exe 目录；QML/图标等只读资源在解包目录。
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -46,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("Zhibo Quick")
     app.setQuitOnLastWindowClosed(False)
 
-    icon_path = Path(__file__).with_name("assets") / "tray.ico"
+    icon_path = RESOURCE_ROOT / "qt_quick" / "assets" / "tray.ico"
     icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
     app.setWindowIcon(icon)
 
@@ -73,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         engine = QQmlApplicationEngine()
         engine.rootContext().setContextProperty("controller", controller)
         engine.rootContext().setContextProperty("streamModel", controller.table_model)
-        qml_path = Path(__file__).with_name("qml") / "Main.qml"
+        qml_path = RESOURCE_ROOT / "qt_quick" / "qml" / "Main.qml"
         engine.load(QUrl.fromLocalFile(str(qml_path)))
         if not engine.rootObjects():
             raise RuntimeError("QML 主界面加载失败")

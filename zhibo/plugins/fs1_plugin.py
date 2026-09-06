@@ -777,6 +777,9 @@ def update_from_text(
 
 
 def update_stream_libraries(packages: tuple[str, ...] = ("streamlink", "streamget")) -> int:
+    if getattr(sys, "frozen", False):
+        # 打包版的 sys.executable 是程序自身，无法执行 -m pip。
+        raise RuntimeError("打包版不能在程序内更新 Python 组件，请下载新版程序覆盖安装")
     cmd = [
         sys.executable,
         "-m",

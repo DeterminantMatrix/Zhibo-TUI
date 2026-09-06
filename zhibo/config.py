@@ -26,10 +26,11 @@ from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 import yaml
 
+from zhibo import app_root, is_frozen
 from zhibo.app_logging import is_sensitive_field, redact_sensitive_mapping, redact_sensitive_text, redact_url
 from zhibo.models import AppConfig, Follower
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = app_root()
 DEFAULT_CSV_FILE = BASE_DIR / "followers.csv"
 DEFAULT_YAML_FILE = BASE_DIR / "followers.yaml"
 
@@ -1224,6 +1225,15 @@ class ConfigManager:
 
     def load_config(self) -> AppConfig:
         if not self.config_path.exists():
+            if self.config_path == DEFAULT_CSV_FILE and is_frozen():
+                # 打包版没有控制台，sys.exit 的提示用户看不见；首次运行
+                # 直接生成可编辑的模板，让界面正常启动。
+                template = (
+                    "enabled,name,tags,plugin,fallback_plugins,platform,url,quality,sport_id,extra" + "\n"
+                    + "false,示例主播（请编辑或删除）,示例,streamlink,streamget,bilibili,"
+                    "https://live.bilibili.com/6,best,," + "\n"
+                )
+                self.config_path.write_text(template, encoding="utf-8", newline="")
             if self.config_path == DEFAULT_CSV_FILE and DEFAULT_YAML_FILE.exists():
                 sys.exit(
                     "错误：检测到旧版 followers.yaml。请先运行 "
