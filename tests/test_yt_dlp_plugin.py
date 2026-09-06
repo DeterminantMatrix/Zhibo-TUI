@@ -4,8 +4,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plugins.base import LiveInfo
-from plugins.yt_dlp_plugin import FormatInfo, YtDlpPlugin, DEFAULT_DOWNLOAD_DIR, _base_ytdlp_opts
+from zhibo.plugins.base import LiveInfo
+from zhibo.plugins.yt_dlp_plugin import (
+    DEFAULT_DOWNLOAD_DIR,
+    FormatInfo,
+    YtDlpPlugin,
+    _base_ytdlp_opts,
+    _cookie_file_path,
+    _ytdlp_download_worker,
+)
+
+
+async def _run_inline(_executor, worker, /, *args, timeout, **kwargs):
+    """Keep parent-process mocks valid while unit-testing worker logic."""
+    return worker(*args, **kwargs)
 
 
 class TestFormatInfo:
@@ -66,7 +78,7 @@ class TestYtDlpPlugin:
         assert self.plugin.name == "yt_dlp"
 
     def test_plugin_registered(self):
-        from plugins import _plugins, register_plugin, get_plugin
+        from zhibo.plugins import _plugins, register_plugin, get_plugin
         # 独立验证注册/查找逻辑，不依赖全局状态
         saved = dict(_plugins)
         _plugins.clear()
@@ -78,6 +90,7 @@ class TestYtDlpPlugin:
             _plugins.clear()
             _plugins.update(saved)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_check_live_not_live(self):
         """检测非直播 YouTube 视频应返回 is_live=False"""
@@ -92,6 +105,7 @@ class TestYtDlpPlugin:
         else:
             assert result.title != ""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_check_live_error_url(self):
         """无效 URL 应返回 is_live=False 并附带 error"""
@@ -101,6 +115,7 @@ class TestYtDlpPlugin:
         assert result.is_live is False
         assert result.extra.get("error") != ""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_get_stream_url_not_live_raises(self):
         """未开播时 get_stream_url 应抛出 RuntimeError"""
@@ -109,6 +124,7 @@ class TestYtDlpPlugin:
                 "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
             )
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_list_formats(self):
         """获取格式列表应返回 list（无 cookies 时可能为空）"""
@@ -121,6 +137,7 @@ class TestYtDlpPlugin:
             assert fmt.format_id != ""
             assert fmt.ext in ("mp4", "webm", "mkv")
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_list_formats_error_url(self):
         """无效 URL 应返回空列表或抛出异常"""
@@ -133,7 +150,7 @@ class TestYtDlpPlugin:
             pass  # 抛出异常也是可接受的
 
     @pytest.mark.asyncio
-    async def test_check_live_with_mock(self):
+    async def test_check_live_with_mock(self, monkeypatch):
         """使用 mock 验证 check_live 正常路径"""
         mock_info = {
             "is_live": True,
@@ -150,6 +167,7 @@ class TestYtDlpPlugin:
             ],
         }
 
+        monkeypatch.setattr("zhibo.plugins.yt_dlp_plugin.run_bounded", _run_inline)
         with patch("yt_dlp.YoutubeDL") as mock_ydl:
             mock_ydl.return_value.__enter__.return_value.extract_info.return_value = mock_info
             result = await self.plugin.check_live("http://youtube.com/test")
@@ -159,8 +177,9 @@ class TestYtDlpPlugin:
         assert result.anchor_name == "Mock Channel"
 
     @pytest.mark.asyncio
-    async def test_check_live_ytdlp_exception(self):
+    async def test_check_live_ytdlp_exception(self, monkeypatch):
         """yt-dlp 抛出异常时应返回 error 信息"""
+        monkeypatch.setattr("zhibo.plugins.yt_dlp_plugin.run_bounded", _run_inline)
         with patch("yt_dlp.YoutubeDL") as mock_ydl:
             mock_ydl.return_value.__enter__.return_value.extract_info.side_effect = ValueError("Boom")
             result = await self.plugin.check_live("http://youtube.com/test")
@@ -177,3 +196,41 @@ class TestYtDlpPlugin:
         opts = _base_ytdlp_opts(proxy_url="http://127.0.0.1:7890")
 
         assert opts["proxy"] == "http://127.0.0.1:7890"
+
+    def test_cookie_file_can_be_configured_outside_project(self, tmp_path, monkeypatch):
+        cookie_file = tmp_path / "cookies.txt"
+        cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+        monkeypatch.setenv("ZHIBO_COOKIE_FILE", str(cookie_file))
+
+        assert _cookie_file_path() == cookie_file
+        assert _base_ytdlp_opts(use_cookies=True)["cookiefile"] == str(cookie_file)
+
+    @pytest.mark.asyncio
+    async def test_download_uses_top_level_worker_and_progress_bridge(self, tmp_path, monkeypatch):
+        captured = {}
+        messages = []
+
+        async def fake_run(_executor, worker, /, *args, timeout, progress_callback=None, progress_kwarg=None, **kwargs):
+            captured.update(
+                worker=worker,
+                args=args,
+                timeout=timeout,
+                progress_kwarg=progress_kwarg,
+            )
+            if progress_callback:
+                progress_callback("下载中 test  50%")
+            return str(tmp_path / "finished.mp4")
+
+        monkeypatch.setattr("zhibo.plugins.yt_dlp_plugin.run_bounded", fake_run)
+        result = await self.plugin.download(
+            "https://www.youtube.com/watch?v=test",
+            "137",
+            output_dir=str(tmp_path),
+            progress_cb=messages.append,
+        )
+
+        assert result.endswith("finished.mp4")
+        assert captured["worker"] is _ytdlp_download_worker
+        assert captured["progress_kwarg"] == "progress_sink"
+        assert captured["timeout"] == 600
+        assert messages == ["下载中 test  50%"]

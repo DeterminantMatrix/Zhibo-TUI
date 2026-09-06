@@ -2,9 +2,18 @@ import asyncio
 import tempfile
 from pathlib import Path
 
-from monitor import MonitorService
-from plugins import _plugins, register_plugin
-from plugins.base import LiveInfo, LiveStreamPlugin
+from zhibo.monitor import MonitorService
+from zhibo.plugins import _plugins, register_plugin
+from zhibo.plugins.base import LiveInfo, LiveStreamPlugin
+
+
+CSV_HEADER = "enabled,name,tags,plugin,fallback_plugins,platform,url,quality,sport_id\n"
+
+
+def write_monitor_csv(row: str) -> str:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
+        f.write(CSV_HEADER + row)
+    return f.name
 
 
 class HeaderPlugin(LiveStreamPlugin):
@@ -73,16 +82,7 @@ class SlowPlugin(LiveStreamPlugin):
 
 def test_get_stream_info_preserves_plugin_extra_headers():
     previous_plugins = dict(_plugins)
-    yaml_content = """
-followers:
-  - name: "主播"
-    plugin: header_plugin
-    platform: huya
-    url: "https://example.com/room"
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
+    fpath = write_monitor_csv("true,主播,,header_plugin,,huya,https://example.com/room,best,\n")
 
     try:
         register_plugin(HeaderPlugin())
@@ -104,17 +104,7 @@ followers:
 
 def test_monitor_uses_configured_fallback_plugin():
     previous_plugins = dict(_plugins)
-    yaml_content = """
-followers:
-  - name: "主播"
-    plugin: error_plugin
-    fallback_plugins: [fallback_plugin]
-    platform: huya
-    url: "https://example.com/room"
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
+    fpath = write_monitor_csv("true,主播,,error_plugin,fallback_plugin,huya,https://example.com/room,best,\n")
 
     try:
         register_plugin(ErrorPlugin())
@@ -134,16 +124,7 @@ followers:
 
 def test_monitor_adds_platform_fallback_for_twitch():
     previous_plugins = dict(_plugins)
-    yaml_content = """
-followers:
-  - name: "主播"
-    plugin: error_plugin
-    platform: twitch
-    url: "https://www.twitch.tv/example"
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
+    fpath = write_monitor_csv("true,主播,,error_plugin,,twitch,https://www.twitch.tv/example,best,\n")
 
     try:
         register_plugin(ErrorPlugin())
@@ -162,16 +143,7 @@ followers:
 
 def test_monitor_reports_status_callback_errors():
     previous_plugins = dict(_plugins)
-    yaml_content = """
-followers:
-  - name: "主播"
-    plugin: header_plugin
-    platform: huya
-    url: "https://example.com/room"
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
+    fpath = write_monitor_csv("true,主播,,header_plugin,,huya,https://example.com/room,best,\n")
     errors = []
 
     try:
@@ -191,17 +163,7 @@ followers:
 
 def test_monitor_passes_configured_quality_to_plugin():
     previous_plugins = dict(_plugins)
-    yaml_content = """
-followers:
-  - name: "主播"
-    plugin: quality_plugin
-    platform: huya
-    url: "https://example.com/room"
-    quality: HD
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
+    fpath = write_monitor_csv("true,主播,,quality_plugin,,huya,https://example.com/room,HD,\n")
 
     try:
         plugin = QualityPlugin()
@@ -217,16 +179,7 @@ followers:
 
 def test_monitor_serializes_overlapping_poll_requests():
     previous_plugins = dict(_plugins)
-    yaml_content = """
-followers:
-  - name: "主播"
-    plugin: slow_plugin
-    platform: huya
-    url: "https://example.com/room"
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
+    fpath = write_monitor_csv("true,主播,,slow_plugin,,huya,https://example.com/room,best,\n")
 
     try:
         plugin = SlowPlugin()
@@ -238,6 +191,103 @@ followers:
 
         asyncio.run(run_overlapping_polls())
         assert plugin.max_active == 1
+    finally:
+        _plugins.clear()
+        _plugins.update(previous_plugins)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_monitor_keeps_last_confirmed_state_when_a_check_errors():
+    previous_plugins = dict(_plugins)
+    fpath = write_monitor_csv("true,主播,,sequence_plugin,,huya,https://example.com/room,best,\n")
+
+    class SequencePlugin(LiveStreamPlugin):
+        name = "sequence_plugin"
+
+        def __init__(self):
+            self.results = iter([
+                LiveInfo(is_live=True, stream_url="https://example.com/live.flv"),
+                LiveInfo(is_live=False, extra={"error": "temporary network failure"}),
+                LiveInfo(is_live=True, stream_url="https://example.com/live.flv"),
+                LiveInfo(is_live=False),
+            ])
+
+        async def check_live(self, url, **kwargs):
+            return next(self.results)
+
+        async def get_stream_url(self, url, quality, **kwargs):
+            raise AssertionError
+
+    try:
+        register_plugin(SequencePlugin())
+        monitor = MonitorService(fpath)
+        transitions = []
+        monitor.on_status_change(lambda idx, status: transitions.append(status.live_info.is_live))
+
+        asyncio.run(monitor.check_one(0))
+        transitions.clear()
+        confirmed_at = monitor.followers[0].last_confirmed_check
+
+        status = asyncio.run(monitor.check_one(0))
+        assert status.live_info.is_live is True
+        assert status.check_state == "error"
+        assert status.last_confirmed_check == confirmed_at
+        assert transitions == []
+
+        status = asyncio.run(monitor.check_one(0))
+        assert status.live_info.is_live is True
+        assert status.check_state == "online"
+        assert transitions == []
+
+        status = asyncio.run(monitor.check_one(0))
+        assert status.live_info.is_live is False
+        assert status.check_state == "offline"
+        assert transitions == [False]
+    finally:
+        _plugins.clear()
+        _plugins.update(previous_plugins)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_platform_skip_preserves_each_follower_confirmed_state():
+    previous_plugins = dict(_plugins)
+    fpath = write_monitor_csv(
+        "true,主播一,,timeout_twitch,,twitch,https://www.twitch.tv/first,best,\n"
+        "true,主播二,,timeout_twitch,,twitch,https://www.twitch.tv/second,best,\n"
+    )
+
+    class TimeoutTwitchPlugin(LiveStreamPlugin):
+        name = "timeout_twitch"
+
+        def __init__(self):
+            self.fail = False
+
+        async def check_live(self, url, **kwargs):
+            if self.fail:
+                return LiveInfo(is_live=False, extra={"error": "检测超时"})
+            return LiveInfo(is_live=True, stream_url="https://example.com/live.flv")
+
+        async def get_stream_url(self, url, quality, **kwargs):
+            raise AssertionError
+
+    try:
+        plugin = TimeoutTwitchPlugin()
+        register_plugin(plugin)
+        monitor = MonitorService(fpath)
+        transitions = []
+        monitor.on_status_change(lambda idx, status: transitions.append((idx, status.live_info.is_live)))
+
+        asyncio.run(monitor.check_one(0))
+        asyncio.run(monitor.check_one(1))
+        transitions.clear()
+
+        plugin.fail = True
+        asyncio.run(monitor.poll_all())
+
+        statuses = [monitor.followers[0], monitor.followers[1]]
+        assert all(status.live_info.is_live for status in statuses)
+        assert {status.check_state for status in statuses} == {"error", "skipped"}
+        assert transitions == []
     finally:
         _plugins.clear()
         _plugins.update(previous_plugins)

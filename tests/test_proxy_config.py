@@ -1,8 +1,8 @@
 import asyncio
 
-from plugins import streamget_plugin
-from plugins.streamget_plugin import StreamgetPlugin
-from proxy_config import DEFAULT_PROXY_URL, proxy_for_platform, set_platform_proxies
+from zhibo.plugins import streamget_plugin
+from zhibo.plugins.streamget_plugin import StreamgetPlugin
+from zhibo.proxy_config import DEFAULT_PROXY_URL, proxy_for_platform, set_platform_proxies
 
 
 def test_foreign_platforms_use_default_proxy(monkeypatch):

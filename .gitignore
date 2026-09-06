@@ -12,6 +12,7 @@ __pycache__/
 *.log
 *.tmp
 *.bak
+.*.lock
 
 # Local runtime data and credentials. Keep redacted *.example templates in Git.
 .env
