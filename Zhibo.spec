@@ -31,6 +31,27 @@ a = Analysis(
     optimize=0,
 )
 
+# ---------------------------------------------------------------------------
+# PyInstaller 的 PySide6 QML 扫描会把 WebEngine（Chromium，196MB）、Quick3D、
+# 软件渲染回退等本程序用不到的 Qt 成分一并拖进来；模块 excludes 拦不住
+# 二进制级收集，只能在 Analysis 之后直接过滤。
+# 注意：opengl32sw 被剪掉后，无可用 GPU 的机器上可能无法渲染。
+_BIN_EXCLUDE_SUBSTRINGS = (
+    "Qt6WebEngine", "Qt6Pdf", "Qt6Charts", "Qt6DataVisualization",
+    "Qt6Quick3D", "Qt63D", "Qt6RemoteObjects", "Qt6NetworkAuth",
+    "Qt6TextToSpeech", "Qt6SerialPort", "Qt6Bluetooth", "Qt6Nfc",
+    "opengl32sw", "d3dcompiler",
+)
+a.binaries = [b for b in a.binaries if not any(x in b[0] for x in _BIN_EXCLUDE_SUBSTRINGS)]
+a.datas = [
+    d for d in a.datas
+    if "translations" not in d[0]
+    and not any(part in d[0] for part in ("QtWebEngine", "QtQuick3D", "Qt3D", "QtCharts"))
+]
+a.binaries += [
+    # 解压/网络等可能被 QML 间接引用的二进制若被误剪，可在此加回。
+]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
