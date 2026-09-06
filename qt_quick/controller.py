@@ -108,6 +108,10 @@ class QuickController(QObject):
     trayAvailabilityChanged = Signal()
     notificationRequested = Signal(str, str)
     sortChanged = Signal()
+    playingFollowerChanged = Signal()
+    logAppended = Signal(str)
+    logTrimmed = Signal()
+    progressChanged = Signal()
     hideRequested = Signal()
     showRequested = Signal()
     quitRequested = Signal()
@@ -142,6 +146,10 @@ class QuickController(QObject):
         self._monitor_restarts = 0
         self._fatal_pending = ""
         self._shutting_down = False
+        # 高频进度（下载/更新）走专用属性，避免每次 tick 重建整个对话框数据。
+        self._progress_value = -1.0
+        self._progress_text = ""
+        self._playing_follower = -1
         self._ui_settings = settings or QSettings("Zhibo", "Zhibo Quick")
         self._tray_available = True
         configured_theme = str(self._ui_settings.value("appearance/theme", "blue"))
@@ -197,6 +205,34 @@ class QuickController(QObject):
     @Property(str, notify=logTextChanged)
     def logText(self):
         return "\n".join(self._log_lines)
+
+    @Property(int, notify=playingFollowerChanged)
+    def playingFollower(self):
+        return self._playing_follower
+
+    def _set_playing_follower(self, follower_index: int) -> None:
+        follower_index = int(follower_index)
+        if follower_index == self._playing_follower:
+            return
+        self._playing_follower = follower_index
+        self.playingFollowerChanged.emit()
+
+    @Property(float, notify=progressChanged)
+    def progressValue(self):
+        return self._progress_value
+
+    @Property(str, notify=progressChanged)
+    def progressText(self):
+        return self._progress_text
+
+    def _set_progress(self, value: float, message: str) -> None:
+        value = float(value)
+        message = message or ""
+        if value == self._progress_value and message == self._progress_text:
+            return
+        self._progress_value = value
+        self._progress_text = message
+        self.progressChanged.emit()
 
     @Property(str, notify=statusTextChanged)
     def statusText(self):
@@ -633,9 +669,14 @@ class QuickController(QObject):
     @Slot(str)
     def append_log(self, message: str) -> None:
         safe = redact_sensitive_text(str(message))
-        self._log_lines.append(f"[{datetime.now():%H:%M:%S}] {safe}")
-        del self._log_lines[:-800]
-        self.logTextChanged.emit()
+        line = f"[{datetime.now():%H:%M:%S}] {safe}"
+        # 增量通知：常规追加只发新行，只有触发 800 行截断时才整体重置。
+        self._log_lines.append(line)
+        if len(self._log_lines) > 800:
+            del self._log_lines[:-800]
+            self.logTrimmed.emit()
+        else:
+            self.logAppended.emit(line)
 
     @Slot(int, int, int, int, bool)
     def saveWindowGeometry(self, x: int, y: int, width: int, height: int, maximized: bool) -> None:
@@ -746,6 +787,7 @@ class QuickController(QObject):
         self.dialogDataChanged.emit()
         self._set_dialog_busy(busy)
         self._set_dialog_error("")
+        self._set_progress(-1.0, "")
 
     def _set_dialog_kind(self, value: str) -> None:
         if value != self._dialog_kind:
@@ -783,6 +825,10 @@ class QuickController(QObject):
             }
         elif kind == "update" and incoming.get("stage") in {"progress", "done"}:
             self._dialog_data = {**self._dialog_data, **incoming}
+            self._set_progress(
+                float(incoming.get("progress", -1.0)),
+                str(incoming.get("progressText", "")),
+            )
         else:
             if (
                 kind == self._dialog_kind
@@ -852,12 +898,9 @@ class QuickController(QObject):
     def _on_progress(self, kind: str, value: float, message: str) -> None:
         if self._dialog_kind != kind:
             return
-        self._dialog_data = {
-            **self._dialog_data,
-            "progress": value,
-            "progressText": redact_sensitive_text(message),
-        }
-        self.dialogDataChanged.emit()
+        # 高频 tick 只更新专用属性；重建 dialogData 会让进度条列表
+        # 的所有卡片在每 256KB 块时被整批重建。
+        self._set_progress(value, message)
 
     def _refresh_rows(self) -> None:
         rows = [
@@ -873,8 +916,10 @@ class QuickController(QObject):
             self._update_selected_details()
         online = sum(1 for row in self._snapshot.get("rows", []) if row.get("live"))
         total = len(self._snapshot.get("rows", []))
-        self._summary_text = f"在线 {online} / 总计 {total} / 当前 {len(rows)}"
-        self.summaryTextChanged.emit()
+        summary = f"在线 {online} / 总计 {total} / 当前 {len(rows)}"
+        if summary != self._summary_text:
+            self._summary_text = summary
+            self.summaryTextChanged.emit()
         self._update_status()
 
     def _update_status(self) -> None:
@@ -948,6 +993,7 @@ class QuickController(QObject):
             return
         if purpose == "play":
             self._stop_player()
+            self._set_playing_follower(int(data.get("idx", -1)))
             self._player_candidates = list(dict.fromkeys(str(item) for item in (data.get("urls") or [url]) if item))
             self._player_candidate_index = 0
             self._player_payload = data
@@ -958,6 +1004,7 @@ class QuickController(QObject):
             return
         if self._player_candidate_index >= len(self._player_candidates):
             self._player_process = None
+            self._set_playing_follower(-1)
             self.append_log(f"mpv 的全部 {len(self._player_candidates)} 条 CDN 候选均启动失败")
             return
         url = self._player_candidates[self._player_candidate_index]
@@ -992,6 +1039,7 @@ class QuickController(QObject):
         self._player_generation += 1
         self._player_candidates = []
         self._player_candidate_index = 0
+        self._set_playing_follower(-1)
         process = self._player_process
         self._player_process = None
         if process is None or process.poll() is not None:

@@ -161,3 +161,14 @@ def test_redact_sensitive_mapping_is_recursive_and_does_not_mutate_input():
     assert "demo-key" not in redacted["url"]
     assert "safe=1" in redacted["url"]
     assert redacted["items"][0]["password"] == "***"
+
+
+def test_log_redaction_hides_header_and_query_credentials():
+    message = "authorization: Bearer top-secret token=abc\nhttps://example.test/live?signature=xyz&safe=1"
+
+    redacted = redact_sensitive_text(message)
+
+    assert "top-secret" not in redacted
+    assert "token=abc" not in redacted
+    assert "signature=xyz" not in redacted
+    assert "safe=1" in redacted

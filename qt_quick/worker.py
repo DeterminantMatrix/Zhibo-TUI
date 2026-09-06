@@ -313,7 +313,8 @@ class QuickMonitorThread:
             return
         self.bridge.log.emit("开始手动刷新…")
         try:
-            await service.poll_all(None)
+            # 手动刷新忽略每主播独立间隔，立即全量检测。
+            await service.poll_all(None, force=True)
             self._emit_snapshot()
             self.bridge.log.emit("手动刷新完成")
         except Exception as exc:
@@ -346,6 +347,7 @@ class QuickMonitorThread:
             self.bridge.streamReady.emit(
                 purpose,
                 {
+                    "idx": follower_index,
                     "url": url,
                     "urls": stream_candidate_urls(info),
                     "title": f"{follower.name} - Zhibo",

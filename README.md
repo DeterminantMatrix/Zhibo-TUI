@@ -61,6 +61,13 @@ true,LPL,LOL,streamlink,streamget,bilibili,https://live.bilibili.com/6,best,,
 
 关注列表仅支持 CSV。`extra` 是可选 JSON 对象列，供插件保存扩展参数；`sport_id` 继续保留为兼容列。
 
+`extra` 里还可以写 `"poll_interval": 秒数` 为单个主播设置独立轮询间隔（5–3600，覆盖全局间隔），适合低频关注的直播间；手动刷新（`F5`/刷新按钮）不受该间隔限制，始终全量检测：
+
+```csv
+enabled,name,tags,plugin,fallback_plugins,platform,url,quality,sport_id,extra
+true,低频主播,游戏,streamlink,streamget,twitch,https://www.twitch.tv/example,best,,"{""poll_interval"":""600""}"
+```
+
 可选的全局设置保存在同目录 `settings.csv`：
 
 ```csv

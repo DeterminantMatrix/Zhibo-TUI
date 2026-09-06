@@ -82,12 +82,12 @@ def test_column_sort_keeps_live_rows_first_and_handles_descending():
     offline_a = {"idx": 2, "live": False, "name": "甲主播", "platform": "bilibili", "tags": ["游戏"]}
     live_c = {"idx": 3, "live": True, "name": "丙主播", "platform": "twitch", "tags": ["游戏"]}
 
-    # 中文按 Unicode 码点排序：丙(U+4E19) < 乙(U+4E59) < 甲(U+7531)。
+    # 中文按拼音排序：丙(bing) < 甲(jia) < 乙(yi)。
     rows = sort_snapshots([offline_b, live_c, offline_a], "name")
-    assert [row["idx"] for row in rows] == [3, 1, 2]  # 在线优先，名称升序
+    assert [row["idx"] for row in rows] == [3, 2, 1]  # 在线优先，名称升序
 
     rows = sort_snapshots([offline_b, live_c, offline_a], "name", descending=True)
-    assert [row["idx"] for row in rows] == [3, 2, 1]  # 名称降序，在线仍在前
+    assert [row["idx"] for row in rows] == [3, 1, 2]  # 名称降序，在线仍在前
 
     empty = {"idx": 4, "live": False, "name": "", "platform": "douyu", "tags": []}
     rows = sort_snapshots([empty, offline_a], "name")

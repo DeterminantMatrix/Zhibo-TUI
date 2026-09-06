@@ -738,7 +738,10 @@ Item {
                     }
                     Text {
                         Layout.fillWidth: true
-                        text: controller.dialogData.progressText || "正在处理…"
+                        // 完成态读 dialogData；进行中的高频 tick 走专用进度属性。
+                        text: controller.dialogStage === "done" || controller.dialogStage === "failed"
+                              ? (controller.dialogData.progressText || "正在处理…")
+                              : (controller.progressText || "正在处理…")
                         color: overlay.textMain
                         wrapMode: Text.Wrap
                         font.pixelSize: 12
@@ -748,14 +751,14 @@ Item {
                         Layout.fillWidth: true
                         from: 0
                         to: 100
-                        value: Math.max(0, controller.dialogData.progress || 0)
-                        indeterminate: (controller.dialogData.progress || 0) < 0
+                        value: Math.max(0, controller.progressValue)
+                        indeterminate: controller.progressValue < 0
                     }
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: (controller.dialogData.progress || 0) >= 0
-                                  ? Math.round(controller.dialogData.progress || 0) + "%" : ""
+                            text: controller.progressValue >= 0
+                                  ? Math.round(controller.progressValue) + "%" : ""
                             color: overlay.textMuted
                             font.pixelSize: 11
                         }
@@ -818,7 +821,9 @@ Item {
             Item { Layout.fillHeight: true }
             Text {
                 Layout.fillWidth: true
-                text: controller.dialogData.progressText || "正在处理…"
+                text: controller.dialogData.stage === "done" && controller.dialogData.progressText
+                      ? controller.dialogData.progressText
+                      : (controller.progressText || "正在处理…")
                 color: controller.dialogData.stage === "done" ? overlay.accent : overlay.textMain
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
@@ -828,12 +833,12 @@ Item {
                 Layout.fillWidth: true
                 from: 0
                 to: 100
-                value: Math.max(0, controller.dialogData.progress || 0)
-                indeterminate: (controller.dialogData.progress || 0) < 0
+                value: Math.max(0, controller.progressValue)
+                indeterminate: controller.progressValue < 0
             }
             Text {
                 Layout.fillWidth: true
-                text: (controller.dialogData.progress || 0) >= 0 ? Math.round(controller.dialogData.progress || 0) + "%" : ""
+                text: controller.progressValue >= 0 ? Math.round(controller.progressValue) + "%" : ""
                 color: overlay.textMuted
                 horizontalAlignment: Text.AlignHCenter
             }

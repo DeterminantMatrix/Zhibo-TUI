@@ -99,6 +99,15 @@ def matches_snapshot(row: dict, tag: str = "全部", state_filter: str = "全部
     return needle in haystack
 
 
+def _pinyin_sort_key(text: str) -> str:
+    """中文按拼音排序；未安装 pypinyin 时回退为 Unicode 码点序。"""
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        return text.casefold()
+    return " ".join(lazy_pinyin(text)).casefold()
+
+
 def sort_snapshots(
     rows: list[dict],
     sort_key: str = "default",
@@ -115,18 +124,18 @@ def sort_snapshots(
             rows,
             key=lambda row: (
                 not row.get("live", False),
-                ", ".join(row.get("tags", [])),
-                row.get("platform", ""),
-                row.get("name", ""),
+                _pinyin_sort_key(", ".join(row.get("tags", []))),
+                _pinyin_sort_key(row.get("platform", "")),
+                _pinyin_sort_key(row.get("name", "")),
             ),
             reverse=descending,
         )
 
     def column_value(row: dict) -> str:
         if sort_key == "tags":
-            return ", ".join(row.get("tags", [])).casefold()
-        text = str(row.get(sort_key, "") or "").strip().casefold()
-        return text if text else "\uffff"
+            return _pinyin_sort_key(", ".join(row.get("tags", [])))
+        text = str(row.get(sort_key, "") or "").strip()
+        return _pinyin_sort_key(text) if text else "\uffff"
 
     # 两段稳定排序：先按列值（支持降序），再把在线行稳定提前，
     # 保证任何排序方向下在线主播都不会沉底。

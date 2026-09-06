@@ -62,6 +62,12 @@ class StreamTableModel(QAbstractTableModel):
         roles[self.ConfiguredPluginRole] = b"configuredPlugin"
         return roles
 
+    # 快照之间真正影响显示的字段；用于跳过内容未变化的整表重建。
+    _SIGNATURE_FIELDS = (
+        "idx", "enabled", "live", "checking", "state", "name", "platform",
+        "title", "quality", "last_check", "health", "plugin", "error",
+    )
+
     def set_rows(self, rows: list[dict]) -> None:
         prepared = []
         for source in rows:
@@ -74,9 +80,17 @@ class StreamTableModel(QAbstractTableModel):
             )
             row["tags_text"] = ", ".join(row.get("tags", []))
             prepared.append(row)
+        if self._signature(prepared) == self._signature(self._rows):
+            return
         self.beginResetModel()
         self._rows = prepared
         self.endResetModel()
+
+    def _signature(self, rows: list[dict]) -> list:
+        return [
+            tuple(str(row.get(field)) for field in self._SIGNATURE_FIELDS)
+            for row in rows
+        ]
 
     def row_for_follower(self, follower_index: int) -> dict | None:
         return next((dict(row) for row in self._rows if row.get("idx") == follower_index), None)

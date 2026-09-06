@@ -611,7 +611,9 @@ ApplicationWindow {
                             color: followerIndex === controller.selectedFollower
                                    ? root.theme.rowSelected
                                    : row % 2 ? root.theme.rowAlternate : root.bg1
-                            border.color: followerIndex === controller.selectedFollower ? root.theme.tagBorder : root.theme.rowBorder
+                            border.color: followerIndex === controller.playingFollower ? root.accent
+                                         : followerIndex === controller.selectedFollower ? root.theme.tagBorder : root.theme.rowBorder
+                            border.width: followerIndex === controller.playingFollower ? 2 : 1
                             // 保存成功后模型角色变化会重新同步画质下拉框的显示。
                             onConfiguredQualityChanged: if (column === 5) qualitySelector.currentIndex = qualitySelector.configuredIndex()
                             onQualityChoicesChanged: if (column === 5) qualitySelector.currentIndex = qualitySelector.configuredIndex()
@@ -621,8 +623,9 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 anchors.leftMargin: 9
                                 anchors.rightMargin: 5
-                                text: cell.display
-                                color: cell.foreground
+                                // 正在播放的主播行：状态列加 ▶ 前缀。
+                                text: (cell.followerIndex === controller.playingFollower && cell.column === 0 ? "▶" : "") + cell.display
+                                color: cell.followerIndex === controller.playingFollower ? root.accent : cell.foreground
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 elide: Text.ElideRight
@@ -763,7 +766,14 @@ ApplicationWindow {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.WrapAnywhere
-                            text: controller.logText
+                            // 增量追加：常规日志只 append 新行，避免每条日志
+                            // 重拼 800 行并整体重设文本；截断时才整体重建。
+                            Component.onCompleted: text = controller.logText
+                            Connections {
+                                target: controller
+                                function onLogAppended(line) { logPanel.append(line) }
+                                function onLogTrimmed() { logPanel.text = controller.logText }
+                            }
                             color: root.theme.headerText
                             font.pixelSize: 12
                             background: Rectangle { color: root.bg0; border.color: root.line; radius: 6 }

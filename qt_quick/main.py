@@ -15,6 +15,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# 冒烟测试会和用户正在运行的实例共用日志文件，Windows 上轮转重命名
+# 会因文件锁失败并刷屏 Logging error；改用独立临时日志。
+if "--smoke-test" in sys.argv:
+    import tempfile
+
+    os.environ.setdefault(
+        "ZHIBO_LOG_FILE",
+        str(Path(tempfile.gettempdir()) / "zhibo-smoke.log"),
+    )
+
 from zhibo.plugins import discover_plugins
 from zhibo.single_instance import COMMAND_SHOW, SingleInstance, notify_existing_instance
 

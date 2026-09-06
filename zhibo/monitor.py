@@ -138,6 +138,7 @@ class MonitorService:
         self._stream_deadline_tasks: dict[int, asyncio.Task] = {}
         self._state_tasks: set[asyncio.Task] = set()
         self._diagnostics = MonitorDiagnostics()
+        self._interval_warned: set[int] = set()
         # The scheduler uses a monotonic deadline for correctness and keeps a
         # wall-clock mirror solely for UI/status display.  A settings change
         # must interrupt a pending wait; otherwise the UI can show the new
@@ -1182,11 +1183,46 @@ class MonitorService:
         await self._cancel_runner_task(idx, token, task)
         return self._mark_deadline_deferred(idx, token, "轮询总时限已到，排队检测暂缓")
 
-    async def poll_all(self, tag: str | None = None) -> list[tuple[int, FollowerStatus]]:
-        """并发检测所有 follower（可选按标签筛选）"""
+    def _follower_poll_interval(self, idx: int, status: FollowerStatus) -> float | None:
+        """单个关注项 ``extra.poll_interval``（秒）覆盖；非法值告警一次并忽略。"""
+        raw = (status.follower.extra or {}).get("poll_interval")
+        if raw is None or raw == "":
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            if idx not in self._interval_warned:
+                self._interval_warned.add(idx)
+                self._logger.warning("关注项 poll_interval 无效，已忽略 idx=%s value=%r", idx, raw)
+            return None
+        return max(5.0, min(3600.0, value))
+
+    def _is_follower_due(self, idx: int, status: FollowerStatus) -> bool:
+        interval = self._follower_poll_interval(idx, status)
+        if interval is None or status.last_check is None:
+            return True
+        return (datetime.now() - status.last_check).total_seconds() >= interval
+
+    async def poll_all(
+        self,
+        tag: str | None = None,
+        *,
+        force: bool = False,
+    ) -> list[tuple[int, FollowerStatus]]:
+        """并发检测所有 follower（可选按标签筛选）。
+
+        设置了 ``extra.poll_interval`` 的关注项按独立间隔节流；``force``
+        用于手动刷新，忽略节流立即全量检测。
+        """
         async with self._poll_lock:
             started = time.perf_counter()
             items = self.get_by_tag(tag)
+            if not force:
+                due = [(idx, status) for idx, status in items if self._is_follower_due(idx, status)]
+                interval_skipped = len(items) - len(due)
+                if interval_skipped:
+                    self._logger.info("按独立轮询间隔跳过 %s 项", interval_skipped)
+                items = due
             diagnostics = self._ensure_diagnostics()
             diagnostics.poll_rounds += 1
             diagnostics.checked_rooms += len(items)

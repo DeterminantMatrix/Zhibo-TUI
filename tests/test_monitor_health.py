@@ -652,3 +652,53 @@ def test_busy_pool_result_is_deferred_without_failure_backoff():
         _plugins.clear()
         _plugins.update(previous_plugins)
         Path(fpath).unlink(missing_ok=True)
+
+
+def test_per_follower_poll_interval_throttles_and_force_overrides():
+    previous_plugins = dict(_plugins)
+    import csv as _csv
+
+    fpath = write_monitor_csv("")  # 只提供表头，下面用完整表重写
+    with open(fpath, "w", encoding="utf-8", newline="") as f:
+        writer = _csv.writer(f)
+        writer.writerow(
+            ["enabled", "name", "tags", "plugin", "fallback_plugins", "platform", "url", "quality", "sport_id", "extra"]
+        )
+        writer.writerow(["true", "低频主播", "", "interval_plugin", "", "twitch", "https://twitch.tv/low", "best", "", '{"poll_interval": "600"}'])
+        writer.writerow(["true", "高频主播", "", "interval_plugin", "", "douyu", "https://douyu.com/hi", "best", "", ""])
+
+    class IntervalPlugin(LiveStreamPlugin):
+        name = "interval_plugin"
+
+        def __init__(self):
+            self.calls_by_url: dict[str, int] = {}
+
+        async def check_live(self, url, **kwargs):
+            self.calls_by_url[url] = self.calls_by_url.get(url, 0) + 1
+            return LiveInfo(is_live=False)
+
+        async def get_stream_url(self, url, quality, **kwargs):
+            raise AssertionError
+
+    try:
+        plugin = IntervalPlugin()
+        register_plugin(plugin)
+        service = MonitorService(fpath)
+
+        asyncio.run(service.poll_all())
+        assert plugin.calls_by_url["https://twitch.tv/low"] == 1
+        assert plugin.calls_by_url["https://douyu.com/hi"] == 1
+
+        # 第二轮：低频主播被独立间隔节流，高频主播照常检测。
+        asyncio.run(service.poll_all())
+        assert plugin.calls_by_url["https://twitch.tv/low"] == 1
+        assert plugin.calls_by_url["https://douyu.com/hi"] == 2
+
+        # 手动刷新强制全量检测。
+        asyncio.run(service.poll_all(None, force=True))
+        assert plugin.calls_by_url["https://twitch.tv/low"] == 2
+        assert plugin.calls_by_url["https://douyu.com/hi"] == 3
+    finally:
+        _plugins.clear()
+        _plugins.update(previous_plugins)
+        Path(fpath).unlink(missing_ok=True)
