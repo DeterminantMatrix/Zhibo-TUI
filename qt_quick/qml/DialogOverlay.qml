@@ -129,9 +129,10 @@ Item {
     component TuiButton: Button {
         id: button
         property bool primary: false
-        implicitHeight: 38
-        leftPadding: 14
-        rightPadding: 14
+        property bool compact: false
+        implicitHeight: compact ? 32 : 38
+        leftPadding: compact ? 10 : 14
+        rightPadding: compact ? 10 : 14
         contentItem: Text {
             text: button.text
             color: !button.enabled ? overlay.theme.disabledText
@@ -494,14 +495,23 @@ Item {
                 selectedIndex = index
             }
             spacing: 8
-            Text {
-                text: "组件管理"
-                color: overlay.textMain
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: "组件管理"
+                    color: overlay.textMain
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                }
+                Item { Layout.fillWidth: true }
+                TuiButton {
+                    compact: true
+                    text: "重新检查全部"
+                    onClicked: controller.checkAllUpdate()
+                }
             }
             Text {
-                text: "打开时只读取本地状态，不访问网络。点击组件按钮后才检查该组件的远端版本。"
+                text: "打开时会自动检查全部组件的远端版本；也可以单独重新检查某个组件。"
                 color: overlay.textMuted
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap

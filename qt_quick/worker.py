@@ -221,6 +221,9 @@ class QuickMonitorThread:
     def request_update_check(self, target: str) -> None:
         self._schedule(lambda: self._check_update_target(target))
 
+    def request_update_check_all(self) -> None:
+        self._schedule(self._check_update_all)
+
     def _schedule(self, factory: Callable[[], Any]) -> None:
         loop = self._loop
         if not loop or not loop.is_running() or self._stop_requested.is_set():
@@ -999,8 +1002,45 @@ class QuickMonitorThread:
                     "target": "mpv",
                 },
             )
+            # 打开即自动检查全部组件的远端版本，免去逐个点击。
+            await self._check_update_all()
         except Exception as exc:
             self._finish("update", False, f"读取更新状态失败：{exc}")
+
+    async def _check_update_all(self) -> None:
+        from zhibo.update_state import check_update_target
+
+        allowed = ("mpv", "ffmpeg", "uosc", "streamlink", "streamget", "yt-dlp")
+        checking_item = {
+            "updateStatus": "checking",
+            "updateHint": "正在检查远端版本…",
+            "actionLabel": "检查中",
+            "actionEnabled": False,
+            "actionKind": "none",
+        }
+        for target in allowed:
+            self.bridge.dialogData.emit(
+                "update",
+                {"stage": "checked", "target": target, "item": dict(checking_item)},
+            )
+
+        async def check_one(target: str) -> None:
+            try:
+                fields = await asyncio.to_thread(check_update_target, target)
+            except Exception as exc:
+                fields = {
+                    "updateStatus": "unknown",
+                    "updateHint": f"检查更新失败：{exc}",
+                    "actionLabel": "重新检查",
+                    "actionEnabled": True,
+                    "actionKind": "recheck",
+                }
+            self.bridge.dialogData.emit(
+                "update",
+                {"stage": "checked", "target": target, "item": fields},
+            )
+
+        await asyncio.gather(*(check_one(target) for target in allowed))
 
     async def _check_update_target(self, target: str) -> None:
         try:

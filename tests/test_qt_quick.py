@@ -44,6 +44,8 @@ class _Monitor:
         self.dialog_requests = []
         self.update_status_requests = 0
         self.update_check_requests = []
+        self.update_check_all_requests = 0
+        self.settings_previews = []
         self.proxy_tests = []
         self.delete_requests = []
         self.quality_requests = []
@@ -79,6 +81,9 @@ class _Monitor:
     def request_settings(self):
         self.dialog_requests.append(("settings", None))
 
+    def preview_settings(self, values):
+        self.settings_previews.append(dict(values))
+
     def request_proxy(self):
         self.dialog_requests.append(("proxy", None))
 
@@ -87,6 +92,9 @@ class _Monitor:
 
     def request_update_status(self):
         self.update_status_requests += 1
+
+    def request_update_check_all(self):
+        self.update_check_all_requests += 1
 
     def request_update_check(self, target):
         self.update_check_requests.append(target)
@@ -1358,7 +1366,7 @@ def test_quick_worker_does_not_run_pip_for_current_package(monkeypatch):
     assert results[-1][3]["downloaded"] is False
 
 
-def test_update_center_open_reads_local_state_without_remote_checks(monkeypatch):
+def test_update_center_open_auto_checks_all_targets(monkeypatch):
     worker = QuickMonitorThread()
     dialogs = []
     worker.bridge.dialogData.connect(lambda kind, data: dialogs.append((kind, dict(data))))
@@ -1366,15 +1374,28 @@ def test_update_center_open_reads_local_state_without_remote_checks(monkeypatch)
         "zhibo.update_state.update_items",
         lambda: [{"value": "ffmpeg", "actionLabel": "未安装", "actionKind": "check"}],
     )
-    monkeypatch.setattr(
-        "zhibo.update_state.check_update_target",
-        lambda _target: pytest.fail("opening the update center must not access remote metadata"),
-    )
+    checked = []
+
+    def fake_check(target):
+        checked.append(target)
+        return {
+            "remoteVersion": "8.1.2",
+            "updateStatus": "install",
+            "actionLabel": "安装",
+            "actionEnabled": True,
+            "actionKind": "execute",
+        }
+
+    monkeypatch.setattr("zhibo.update_state.check_update_target", fake_check)
 
     asyncio.run(worker._load_update_status())
 
-    assert dialogs[-1][0] == "update"
-    assert dialogs[-1][1]["items"][0]["actionLabel"] == "未安装"
+    assert dialogs[0][0] == "update"
+    assert dialogs[0][1]["items"][0]["actionLabel"] == "未安装"
+    # 打开即自动检查全部 6 个支持远端检查的组件，无需逐个点击。
+    assert sorted(checked) == ["ffmpeg", "mpv", "streamget", "streamlink", "uosc", "yt-dlp"]
+    patches = [data for kind, data in dialogs if kind == "update" and data.get("stage") == "checked"]
+    assert {patch["target"] for patch in patches} == set(checked)
 
 
 def test_update_worker_checks_only_requested_target(monkeypatch):
@@ -1444,3 +1465,29 @@ def test_quick_worker_import_preview_and_confirm_update_runtime(tmp_path, monkey
     assert results[-1][0:2] == ("import", True)
     assert [item.name for item in manager.read_followers()] == ["原关注", "新关注"]
     assert worker._service.followers[1].follower.name == "新关注"
+
+
+def test_quick_controller_check_all_update_dispatches_only_in_update_dialog():
+    monitor = _Monitor()
+    controller = QuickController(monitor)
+
+    controller.checkAllUpdate()
+    assert monitor.update_check_all_requests == 0  # 对话框未打开时不动作
+
+    controller._show_dialog("update", {"stage": "form", "items": []})
+    controller.checkAllUpdate()
+    assert monitor.update_check_all_requests == 1
+
+
+def test_quick_controller_busy_is_per_operation():
+    controller = QuickController(_Monitor())
+    controller._show_dialog("settings", {"stage": "form"})
+    controller.submitSettings({"poll_interval": "30"})
+    assert controller.dialogBusy is True
+
+    # 另一 kind 的操作完成不得解除设置对话框的忙状态（旧全局 busy 的竞态）。
+    controller._on_operation_finished("quality", True, "画质已更新", {})
+    assert controller.dialogBusy is True
+
+    controller._on_operation_finished("settings", True, "已保存", {"close": True})
+    assert controller.dialogBusy is False

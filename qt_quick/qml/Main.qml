@@ -33,13 +33,12 @@ ApplicationWindow {
     property color red: theme.red
     property bool allowClose: false
     property bool shortcutsEnabled: controller.dialogKind === "" && !search.activeFocus
-    property bool forceLogAtNarrow: false
     // 与 controller/model 的列定义一一对应的排序键。
     readonly property var sortKeys: ["default", "tags", "name", "platform", "title", "quality", "last_check", "health", "plugin", "error"]
     // 最大化时 QML 读不到"正常几何"，手动跟踪窗口化状态下的尺寸位置。
     property var lastNormal: ({ x: 0, y: 0, w: 0, h: 0 })
     readonly property bool narrowLayout: width < 1180
-    readonly property bool logPaneVisible: controller.logVisible && (!narrowLayout || forceLogAtNarrow)
+    readonly property bool logPaneVisible: controller.logVisible
 
     palette.window: bg0
     palette.windowText: textMain
@@ -119,11 +118,6 @@ ApplicationWindow {
         const safeX = Math.max(8, Math.min(position.x, root.width - menuWidth - 8))
         const safeY = Math.max(8, Math.min(position.y, root.height - menuHeight - 8))
         rowContextMenu.popup(root.contentItem, safeX, safeY)
-    }
-
-    onNarrowLayoutChanged: {
-        if (narrowLayout)
-            forceLogAtNarrow = false
     }
 
     onVisibilityChanged: {
@@ -492,25 +486,6 @@ ApplicationWindow {
                             }
                             TuiButton { compact: true; text: "重置列宽"; onClicked: controller.resetColumnWidths() }
                             Item { Layout.fillWidth: true }
-                            Text {
-                                visible: root.narrowLayout && !root.logPaneVisible
-                                text: "窄屏已收起日志"
-                                color: root.yellow
-                                font.pixelSize: 11
-                            }
-                            TuiButton {
-                                compact: true
-                                text: root.logPaneVisible ? "收起日志  ◀" : "展开日志  ▶"
-                                onClicked: {
-                                    if (root.narrowLayout && !root.logPaneVisible) {
-                                        root.forceLogAtNarrow = true
-                                        controller.setLogVisible(true)
-                                    } else {
-                                        controller.setLogVisible(!controller.logVisible)
-                                        if (!controller.logVisible) root.forceLogAtNarrow = false
-                                    }
-                                }
-                            }
                         }
                     }
 
@@ -724,18 +699,35 @@ ApplicationWindow {
             Rectangle {
                 id: logContainer
                 objectName: "logContainer"
-                visible: root.logPaneVisible
-                SplitView.preferredWidth: controller.logWidth
-                SplitView.minimumWidth: 250
-                SplitView.maximumWidth: 600
+                // 折叠时保留一条细栏，点击即可展开（工具栏不再有收起/展开按钮）。
+                SplitView.preferredWidth: root.logPaneVisible ? controller.logWidth : 44
+                SplitView.minimumWidth: root.logPaneVisible ? 250 : 44
+                SplitView.maximumWidth: root.logPaneVisible ? 600 : 44
                 color: root.bg1
                 border.color: root.line
                 radius: 8
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 8
+                    visible: !root.logPaneVisible
+                    color: stripHover.hovered ? root.bg2 : root.bg1
+                    TapHandler { onTapped: controller.setLogVisible(true) }
+                    HoverHandler { id: stripHover; cursorShape: Qt.PointingHandCursor }
+                    Text {
+                        text: "运行日志 ▶"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        anchors.centerIn: parent
+                        rotation: -90
+                    }
+                }
 
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 8
+                    visible: root.logPaneVisible
                     RowLayout {
                         Layout.fillWidth: true
                         Text { text: "运行日志"; color: root.textMain; font.pixelSize: 13; font.weight: Font.DemiBold }

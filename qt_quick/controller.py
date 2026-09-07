@@ -141,7 +141,7 @@ class QuickController(QObject):
         self._player_generation = 0
         self._dialog_kind = ""
         self._dialog_data: dict = {}
-        self._dialog_busy = False
+        self._dialog_ops: set[str] = set()
         self._dialog_error = ""
         self._monitor_restarts = 0
         self._fatal_pending = ""
@@ -260,7 +260,7 @@ class QuickController(QObject):
 
     @Property(bool, notify=dialogBusyChanged)
     def dialogBusy(self):
-        return self._dialog_busy
+        return bool(self._dialog_ops)
 
     @Property(str, notify=dialogErrorChanged)
     def dialogError(self):
@@ -400,7 +400,7 @@ class QuickController(QObject):
 
     @Slot("QVariantMap")
     def testProxy(self, values) -> None:
-        self._set_dialog_busy(True)
+        self._begin_op("proxy")
         self._set_dialog_error("")
         self.monitor.test_proxy(dict(values))
 
@@ -547,7 +547,7 @@ class QuickController(QObject):
 
     @Slot()
     def closeDialog(self) -> None:
-        if self._dialog_busy:
+        if self._dialog_ops:
             return
         self._set_dialog_kind("")
         self._dialog_data = {}
@@ -558,7 +558,7 @@ class QuickController(QObject):
     @Slot()
     def backToForm(self) -> None:
         """确认页的"返回"回到表单并保留已输入内容；无表单时关闭对话框。"""
-        if self._dialog_busy:
+        if self._dialog_ops:
             return
         if not self._dialog_form_data:
             self.closeDialog()
@@ -572,25 +572,25 @@ class QuickController(QObject):
         if self._dialog_kind != "edit":
             return
         index = int(self._dialog_data.get("index", self._selected_follower))
-        self._set_dialog_busy(True)
+        self._begin_op("edit")
         self._set_dialog_error("")
         self.monitor.preview_edit(index, dict(values))
 
     @Slot("QVariantMap")
     def submitSettings(self, values) -> None:
-        self._set_dialog_busy(True)
+        self._begin_op("settings")
         self._set_dialog_error("")
         self.monitor.preview_settings(dict(values))
 
     @Slot("QVariantMap")
     def submitProxy(self, values) -> None:
-        self._set_dialog_busy(True)
+        self._begin_op("proxy")
         self._set_dialog_error("")
         self.monitor.save_proxy(dict(values))
 
     @Slot(str, str)
     def submitImport(self, url: str, tag: str) -> None:
-        self._set_dialog_busy(True)
+        self._begin_op("import")
         self._set_dialog_error("")
         self.monitor.preview_import(url.strip(), tag.strip())
 
@@ -598,19 +598,19 @@ class QuickController(QObject):
     def confirmDialog(self) -> None:
         if not self._dialog_kind:
             return
-        self._set_dialog_busy(True)
+        self._begin_op(self._dialog_kind)
         self._set_dialog_error("")
         self.monitor.confirm_pending(self._dialog_kind)
 
     @Slot(str)
     def requestDownloadFormats(self, url: str) -> None:
-        self._set_dialog_busy(True)
+        self._begin_op("download")
         self._set_dialog_error("")
         self.monitor.request_download_formats(url.strip())
 
     @Slot(int)
     def startDownload(self, format_index: int) -> None:
-        self._set_dialog_busy(True)
+        self._begin_op("download")
         self._set_dialog_error("")
         self.monitor.start_download(format_index)
 
@@ -618,7 +618,7 @@ class QuickController(QObject):
     def submitUpdate(self, target: str, content: str) -> None:
         self._dialog_data = {**self._dialog_data, "target": target}
         self.dialogDataChanged.emit()
-        self._set_dialog_busy(True)
+        self._begin_op("update")
         self._set_dialog_error("")
         if target in {"mpv", "ffmpeg"}:
             # 更新会原子替换工具目录；正在运行的 mpv 会锁住 exe 导致失败。
@@ -646,13 +646,19 @@ class QuickController(QObject):
             return
         self._dialog_data = {**self._dialog_data, "items": items, "target": target}
         self.dialogDataChanged.emit()
-        self._set_dialog_busy(True)
+        self._begin_op("update")
         self._set_dialog_error("")
         self.monitor.request_update_check(target)
 
     @Slot()
+    def checkAllUpdate(self) -> None:
+        if self._dialog_kind != "update":
+            return
+        self.monitor.request_update_check_all()
+
+    @Slot()
     def continueUpdateCenter(self) -> None:
-        if self._dialog_kind != "update" or self._dialog_busy:
+        if self._dialog_kind != "update" or self._dialog_ops:
             return
         self._dialog_data = {
             **self._dialog_data,
@@ -785,7 +791,8 @@ class QuickController(QObject):
         self._dialog_data = dict(data)
         self._dialog_form_data = {}
         self.dialogDataChanged.emit()
-        self._set_dialog_busy(busy)
+        if busy:
+            self._begin_op(kind)
         self._set_dialog_error("")
         self._set_progress(-1.0, "")
 
@@ -794,9 +801,15 @@ class QuickController(QObject):
             self._dialog_kind = value
             self.dialogKindChanged.emit()
 
-    def _set_dialog_busy(self, value: bool) -> None:
-        if value != self._dialog_busy:
-            self._dialog_busy = value
+    def _begin_op(self, kind: str) -> None:
+        """登记一个在途操作；只有同 kind 的完成事件才会解除它。"""
+        if kind and kind not in self._dialog_ops:
+            self._dialog_ops.add(kind)
+            self.dialogBusyChanged.emit()
+
+    def _end_op(self, kind: str) -> None:
+        if kind in self._dialog_ops:
+            self._dialog_ops.discard(kind)
             self.dialogBusyChanged.emit()
 
     def _set_dialog_error(self, value: str) -> None:
@@ -839,13 +852,13 @@ class QuickController(QObject):
                 self._dialog_form_data = dict(self._dialog_data)
             self._dialog_data = incoming
         self.dialogDataChanged.emit()
-        self._set_dialog_busy(False)
+        self._end_op(kind)
         self._set_dialog_error("")
 
     @Slot(str, bool, str, object)
     def _on_operation_finished(self, kind: str, success: bool, message: str, payload) -> None:
         data = dict(payload)
-        self._set_dialog_busy(False)
+        self._end_op(kind)
         if message:
             self.append_log(message)
         if success:
