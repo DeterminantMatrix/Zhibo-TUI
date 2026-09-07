@@ -52,6 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(argv)
     app.setApplicationName("Zhibo Quick")
     app.setQuitOnLastWindowClosed(False)
+    # 界面是自绘暗色主题；不强制原生层走 Dark 的话，FluentWinUI3 的
+    # 下拉弹层、编辑菜单等原生部件仍是亮底，出现白底看不清的选单。
+    try:
+        app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+    except AttributeError:
+        pass  # 旧版 Qt 没有 color scheme API
 
     icon_path = RESOURCE_ROOT / "assets" / "tray.ico"
     icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()

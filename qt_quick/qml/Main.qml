@@ -15,6 +15,9 @@ ApplicationWindow {
     title: "直播监控工具 · Qt Quick TUI"
     readonly property var theme: controller.themePalette
     color: bg0
+    // 统一字体：不显式指定时，TextArea 等 Controls 会用 FluentWinUI3
+    // 样式的默认字体，中文回退成宋体，与界面其他部分不一致。
+    font.family: "Microsoft YaHei UI"
 
     property color bg0: theme.bg0
     property color bg1: theme.bg1
@@ -744,30 +747,42 @@ ApplicationWindow {
                             onClicked: controller.setLogVisible(false)
                         }
                     }
-                    ScrollView {
+                    Flickable {
                         id: logScroll
                         objectName: "logScroll"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        contentWidth: availableWidth
+                        contentWidth: width
+                        contentHeight: Math.max(logPanel.height, height)
+                        flickableDirection: Flickable.VerticalFlick
+                        boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: ScrollBar {
-                            policy: ScrollBar.AlwaysOn
+                            policy: ScrollBar.AsNeeded
                         }
-                        ScrollBar.horizontal: ScrollBar {
-                            policy: ScrollBar.AlwaysOff
+
+                        // 视口底色：内容不足一屏时补齐面板，避免露出容器底色。
+                        Rectangle {
+                            width: logScroll.width
+                            height: logScroll.height
+                            color: root.bg0
+                            border.color: root.line
+                            radius: 6
                         }
 
                         TextArea {
                             id: logPanel
                             objectName: "logPanel"
-                            width: logScroll.availableWidth
-                            height: Math.max(logScroll.availableHeight, contentHeight + topPadding + bottomPadding)
+                            width: logScroll.width
+                            // 高度跟随内容：若强行撑满视口，TextArea 会因
+                            // 光标可见性触发内部滚动位移，把文字渲染到面板中部。
+                            height: contentHeight + topPadding + bottomPadding
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.WrapAnywhere
                             // 增量追加：常规日志只 append 新行，避免每条日志
                             // 重拼 800 行并整体重设文本；截断时才整体重建。
+                            font.family: "Microsoft YaHei UI"
                             Component.onCompleted: text = controller.logText
                             Connections {
                                 target: controller
@@ -776,16 +791,14 @@ ApplicationWindow {
                             }
                             color: root.theme.headerText
                             font.pixelSize: 12
-                            background: Rectangle { color: root.bg0; border.color: root.line; radius: 6 }
-                            onTextChanged: {
-                                cursorPosition = length
-                                Qt.callLater(function() {
-                                    if (logScroll.contentItem && logScroll.contentItem.contentHeight !== undefined)
-                                        logScroll.contentItem.contentY = Math.max(
-                                            0,
-                                            logScroll.contentItem.contentHeight - logScroll.contentItem.height
-                                        )
-                                })
+                            background: Item {}
+                            onTextChanged: Qt.callLater(scrollToLatest)
+                            // 内容少时顶部对齐（从上往下阅读）；超出视口后吸底。
+                            function scrollToLatest() {
+                                logScroll.contentY = Math.max(
+                                    0,
+                                    logScroll.contentHeight - logScroll.height
+                                )
                             }
                         }
                     }
