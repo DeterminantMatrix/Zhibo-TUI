@@ -900,12 +900,8 @@ class MonitorService:
                     compact_error,
                 )
                 errors.append(f"{plugin_name}: {compact_error}")
-                # A plugin may raise a shared connectivity/authentication
-                # error instead of returning it in LiveInfo.extra.  Continuing
-                # the same room's fallback chain in that case only repeats the
-                # unavailable platform request and can amplify an outage.
-                if compact_error and self._is_platform_circuit_error(f.platform, compact_error):
-                    break
+                # 主插件的网络错误不代表备用插件也不可用（二者 API 不同），
+                # 继续尝试备用；平台级熔断由 check_one 统一记录。
                 continue
             elapsed = time.perf_counter() - plugin_start
 
@@ -931,8 +927,8 @@ class MonitorService:
             errors.append(f"{plugin_name}: {error or '结果不可播放'}")
             if info.extra.get("busy"):
                 saw_busy = True
-            if error and self._is_platform_circuit_error(f.platform, error):
-                break
+            # 主插件超时/熔断不掐断备用链：备用插件走不同 API，
+            # streamlink 超时时 streamget 往往仍能成功。
 
         aggregate = {"error": "; ".join(errors) or "所有插件检测失败", "check_error": True}
         if saw_busy:

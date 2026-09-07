@@ -205,9 +205,13 @@ def test_fallback_order_is_deduplicated_and_preserved(tmp_path, isolated_plugin_
     assert status.live_info.extra["plugin_used"] == "fault_b"
 
 
-def test_shared_exception_stops_unnecessary_same_room_fallback(
+def test_shared_exception_falls_through_to_fallback_plugin(
     tmp_path, isolated_plugin_registry
 ):
+    """主插件超时/异常不掐断备用链：备用 API 不同，往往仍能成功。
+
+    （真实案例：huya 房间 streamlink 超时/崩溃，streamget 一直正常。）
+    """
     service = make_service(
         tmp_path,
         "true,主播,,fault_shared_error,fault_after_shared,huya,https://example.com/room,best,\n",
@@ -229,7 +233,7 @@ def test_shared_exception_stops_unnecessary_same_room_fallback(
 
         async def check_live(self, url, **kwargs):
             calls.append(self.name)
-            return LiveInfo(is_live=True, stream_url="https://example.com/should-not-run")
+            return LiveInfo(is_live=True, stream_url="https://example.com/works")
 
         async def get_stream_url(self, url, quality, **kwargs):
             raise AssertionError
@@ -239,11 +243,9 @@ def test_shared_exception_stops_unnecessary_same_room_fallback(
 
     status = asyncio.run(service.check_one(0))
 
-    assert calls == ["fault_shared_error"]
-    assert status.check_state == "error"
-    assert "connection timed out" in status.error
-
-
+    assert calls == ["fault_shared_error", "fault_after_shared"]
+    assert status.check_state == "online"
+    assert status.live_info.extra["plugin_used"] == "fault_after_shared"
 def test_status_history_deduplicates_adjacent_entries_and_keeps_twenty(
     tmp_path, isolated_plugin_registry
 ):
