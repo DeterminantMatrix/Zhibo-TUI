@@ -575,9 +575,12 @@ class QuickController(QObject):
 
     @Slot("QVariantMap")
     def submitEdit(self, values) -> None:
-        if self.dialogs.kind != "edit":
+        """详情面板的"保存修改"：生成脱敏差异，确认后才写入。"""
+        if not self.detailsVisible:
             return
-        index = int(self.dialogs.data.get("index", self._selected_follower))
+        index = int(self.selectedDetails.get("idx", self._selected_follower))
+        if index < 0:
+            return
         self.dialogs.begin_op("edit")
         self.dialogs.set_error("")
         self.monitor.preview_edit(index, dict(values))
@@ -767,11 +770,8 @@ class QuickController(QObject):
         self.monitor.stop()
 
     def _open_edit(self) -> None:
-        if self._selected_follower < 0:
-            self.append_log("请先选择一个关注项")
-            return
-        self._show_dialog("edit", {"stage": "loading"}, busy=True)
-        self.monitor.request_edit(self._selected_follower)
+        """编辑入口与详情合并：打开右侧"直播间详情"面板。"""
+        self.showDetails()
 
     def _open_delete(self) -> None:
         if self._selected_follower < 0:
@@ -813,6 +813,9 @@ class QuickController(QObject):
         close, new_data = self.dialogs.apply_result(kind, success, message, dict(payload))
         if close:
             self.closeDialog()
+            if kind == "edit" and success and self.detailsVisible:
+                # 保存成功：重新拉取详情行与表单初值，面板保持打开。
+                self.monitor.request_details(self._selected_follower)
             return
         if new_data is not None:
             self.dialogs.data = new_data

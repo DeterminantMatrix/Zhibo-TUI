@@ -212,6 +212,46 @@ ApplicationWindow {
         }
     }
 
+    component PanelField: RowLayout {
+        property alias label: fieldLabel.text
+        property alias text: fieldValue.text
+        property string hint: ""
+        spacing: 8
+        Text {
+            id: fieldLabel
+            color: root.textMuted
+            font.pixelSize: 12
+            Layout.preferredWidth: 96
+        }
+        TextField {
+            id: fieldValue
+            Layout.fillWidth: true
+            font.pixelSize: 12
+            font.family: "Microsoft YaHei UI"
+            color: root.textMain
+            selectByMouse: true
+            placeholderText: parent.hint
+            background: Rectangle {
+                color: root.bg0
+                border.color: fieldValue.activeFocus ? root.accent : root.line
+                radius: 7
+            }
+        }
+    }
+
+    component PanelSwitch: RowLayout {
+        property alias label: switchLabel.text
+        property alias checked: switchCheck.checked
+        spacing: 8
+        Text {
+            id: switchLabel
+            color: root.textMuted
+            font.pixelSize: 12
+            Layout.preferredWidth: 96
+        }
+        Switch { id: switchCheck }
+    }
+
     component DetailLine: Rectangle {
         id: detailLine
         property string label: ""
@@ -947,8 +987,7 @@ ApplicationWindow {
             radius: 7
         }
 
-        TuiMenuItem { text: "修改直播间信息  [E]"; onTriggered: controller.action("edit") }
-        TuiMenuItem { text: "查看状态详情  [I]"; onTriggered: controller.action("details") }
+        TuiMenuItem { text: "直播间详情与修改  [I]"; onTriggered: controller.action("details") }
         TuiMenuItem {
             text: controller.selectedRowEnabled ? "停止监控（保留配置）" : "恢复监控"
             onTriggered: controller.action("toggle_enabled")
@@ -978,7 +1017,8 @@ ApplicationWindow {
         MouseArea { anchors.fill: parent; onClicked: controller.hideDetails() }
 
         Rectangle {
-            width: Math.min(510, parent.width * 0.46)
+            id: detailPanel
+            width: Math.min(560, parent.width * 0.52)
             anchors.top: parent.top
             anchors.topMargin: 10
             anchors.bottom: parent.bottom
@@ -989,6 +1029,34 @@ ApplicationWindow {
             border.color: root.lineBright
             radius: 10
             MouseArea { anchors.fill: parent }
+
+            // 编辑草稿：详情数据到达时初始化；保存成功后面板刷新会再次填充。
+            property int formIdx: -2
+            function initForm() {
+                const f = controller.selectedDetails.form || {}
+                formIdx = controller.selectedDetails.idx
+                formEnabled.checked = String(f.enabled || "true").toLowerCase() === "true"
+                formName.text = f.name || ""
+                formTags.text = f.tags || ""
+                formPlugin.text = f.plugin || ""
+                formFallbacks.text = f.fallback_plugins || ""
+                formPlatform.text = f.platform || ""
+                formUrl.text = f.url || ""
+                formQuality.text = f.quality || "best"
+                formSport.text = f.sport_id || ""
+                formExtra.text = f.extra || "{}"
+            }
+            Connections {
+                target: controller
+                function onSelectedDetailsChanged() {
+                    if (controller.detailsVisible)
+                        detailPanel.initForm()
+                }
+                function onDetailsVisibleChanged() {
+                    if (controller.detailsVisible)
+                        Qt.callLater(detailPanel.initForm)
+                }
+            }
 
             ColumnLayout {
                 anchors.fill: parent
@@ -1025,10 +1093,75 @@ ApplicationWindow {
                             wrapMode: Text.Wrap
                             Layout.fillWidth: true
                         }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: root.line; Layout.topMargin: 8 }
+                        Text {
+                            text: "修改资料"
+                            color: root.textMain
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            text: "保存前会显示脱敏差异确认；Cookie、令牌和授权头不能写入关注配置。"
+                            color: root.textMuted
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                        }
+                        PanelSwitch { id: formEnabled; label: "启用" }
+                        PanelField { id: formName; label: "名称" }
+                        PanelField { id: formTags; label: "标签"; hint: "用 | 或逗号分隔" }
+                        PanelField { id: formPlugin; label: "主插件" }
+                        PanelField { id: formFallbacks; label: "备用插件"; hint: "用 | 分隔" }
+                        PanelField { id: formPlatform; label: "平台" }
+                        PanelField { id: formUrl; label: "直播间地址" }
+                        PanelField { id: formQuality; label: "画质" }
+                        PanelField { id: formSport; label: "sport_id" }
+                        Text { text: "扩展字段（JSON 对象）"; color: root.textMuted; font.pixelSize: 12 }
+                        TextArea {
+                            id: formExtra
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 110
+                            text: "{}"
+                            color: root.textMain
+                            font.pixelSize: 12
+                            font.family: "Microsoft YaHei UI"
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            background: Rectangle {
+                                color: root.bg0
+                                border.color: formExtra.activeFocus ? root.accent : root.line
+                                radius: 7
+                            }
+                        }
+                        Text {
+                            visible: controller.dialogKind === "edit" && controller.dialogError !== ""
+                            text: controller.dialogError
+                            color: root.red
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                            Layout.fillWidth: true
+                        }
                     }
                 }
                 RowLayout {
                     Layout.fillWidth: true
+                    TuiButton {
+                        primary: true
+                        text: "保存修改"
+                        enabled: !controller.dialogBusy
+                        onClicked: controller.submitEdit({
+                            enabled: formEnabled.checked ? "true" : "false",
+                            name: formName.text,
+                            tags: formTags.text,
+                            plugin: formPlugin.text,
+                            fallback_plugins: formFallbacks.text,
+                            platform: formPlatform.text,
+                            url: formUrl.text,
+                            quality: formQuality.text,
+                            sport_id: formSport.text,
+                            extra: formExtra.text
+                        })
+                    }
                     TuiButton { text: "打开网页 [F]"; onClicked: controller.action("web") }
                     TuiButton { text: "复制流 [C]"; onClicked: controller.action("copy_stream") }
                     Item { Layout.fillWidth: true }

@@ -25,7 +25,7 @@ Item {
 
     function titleFor(kind) {
         const titles = {
-            edit: "EDIT FOLLOWER / 编辑关注项",
+            edit: "CONFIRM CHANGES / 确认保存修改",
             delete: "DELETE FOLLOWER / 删除直播间",
             settings: "MONITOR SETTINGS / 监控设置",
             import: "IMPORT FOLLOWER / 导入直播间",
@@ -41,7 +41,6 @@ Item {
         if (kind === "update") return updateComponent
         if (stage === "confirm") return confirmComponent
         if (stage === "progress" || stage === "done") return progressComponent
-        if (kind === "edit") return editComponent
         if (kind === "settings") return settingsComponent
         if (kind === "import") return importComponent
         if (kind === "proxy") return proxyComponent
@@ -50,7 +49,7 @@ Item {
     }
 
     function panelHeightFor(kind, stage) {
-        if (kind === "edit" || kind === "update") return 760
+        if (kind === "update") return 760
         if (kind === "delete") return 410
         if (stage === "confirm" || stage === "progress" || stage === "done") return 620
         if (kind === "import") return 430
@@ -72,7 +71,7 @@ Item {
         id: panel
         objectName: "dialogPanel"
         anchors.centerIn: parent
-        width: Math.min(parent.width - 48, (controller.dialogKind === "edit" || controller.dialogKind === "update") ? 900 : 760)
+        width: Math.min(parent.width - 48, controller.dialogKind === "update" ? 900 : 760)
         height: Math.min(parent.height - 42, overlay.panelHeightFor(controller.dialogKind, controller.dialogStage || "form"))
         color: overlay.bg1
         border.color: overlay.lineBright
@@ -253,70 +252,6 @@ Item {
                     onClicked: controller.confirmDialog()
                 }
                 TuiButton { text: "返回"; enabled: !controller.dialogBusy; onClicked: controller.backToForm() }
-            }
-        }
-    }
-
-    Component {
-        id: editComponent
-        ColumnLayout {
-            spacing: 9
-            Text {
-                text: "保存前会显示脱敏差异；Cookie、令牌和授权头不能写入关注配置。"
-                color: overlay.textMuted
-                font.pixelSize: 12
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-            }
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                ColumnLayout {
-                    width: contentLoader.width - 28
-                    spacing: 7
-                    TuiSwitchField { id: editEnabled; label: "启用"; checked: String(controller.dialogData.enabled || "true").toLowerCase() === "true" }
-                    TuiField { id: editName; label: "名称"; text: controller.dialogData.name || "" }
-                    TuiField { id: editTags; label: "标签"; placeholder: "用 | 或逗号分隔"; text: controller.dialogData.tags || "" }
-                    TuiField { id: editPlugin; label: "主插件"; text: controller.dialogData.plugin || "" }
-                    TuiField { id: editFallbacks; label: "备用插件"; placeholder: "用 | 分隔"; text: controller.dialogData.fallback_plugins || "" }
-                    TuiField { id: editPlatform; label: "平台"; text: controller.dialogData.platform || "" }
-                    TuiField { id: editUrl; label: "直播间地址"; text: controller.dialogData.url || "" }
-                    TuiField { id: editQuality; label: "画质"; text: controller.dialogData.quality || "best" }
-                    TuiField { id: editSport; label: "sport_id"; text: controller.dialogData.sport_id || "" }
-                    Text { text: "扩展字段（JSON 对象）"; color: overlay.textMuted; font.pixelSize: 12 }
-                    TextArea {
-                        id: editExtra
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 130
-                        text: controller.dialogData.extra || "{}"
-                        color: overlay.textMain
-                        selectByMouse: true
-                        wrapMode: TextEdit.WrapAnywhere
-                        background: Rectangle { color: overlay.bg0; border.color: editExtra.activeFocus ? overlay.accent : overlay.line; radius: 7 }
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                TuiButton {
-                    primary: true
-                    text: "生成修改预览"
-                    enabled: !controller.dialogBusy
-                    onClicked: controller.submitEdit({
-                        enabled: editEnabled.checked ? "true" : "false",
-                        name: editName.text,
-                        tags: editTags.text,
-                        plugin: editPlugin.text,
-                        fallback_plugins: editFallbacks.text,
-                        platform: editPlatform.text,
-                        url: editUrl.text,
-                        quality: editQuality.text,
-                        sport_id: editSport.text,
-                        extra: editExtra.text
-                    })
-                }
             }
         }
     }

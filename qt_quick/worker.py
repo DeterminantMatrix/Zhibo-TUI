@@ -160,9 +160,6 @@ class QuickMonitorThread:
     def request_details(self, follower_index: int) -> None:
         self._schedule(lambda: self._load_details(follower_index))
 
-    def request_edit(self, follower_index: int) -> None:
-        self._schedule(lambda: self._load_edit(follower_index))
-
     def preview_edit(self, follower_index: int, values: dict) -> None:
         self._schedule(lambda: self._preview_edit(follower_index, values))
 
@@ -374,6 +371,8 @@ class QuickMonitorThread:
             if status is None:
                 raise ValueError("选中的关注项已不存在")
             detail = build_detail_view(status, service.get_platform_health(status.follower.platform))
+            # 详情与编辑合一：同一份推送同时携带状态详情行和编辑表单初值。
+            form = follower_to_edit_payload(status.follower, redact=True)
             self.bridge.detailData.emit(
                 {
                     "idx": follower_index,
@@ -383,33 +382,22 @@ class QuickMonitorThread:
                         for row in detail.rows
                     ],
                     "streamAvailable": detail.stream_available,
+                    "form": {
+                        "enabled": "true" if form.get("enabled", True) else "false",
+                        "name": form.get("name", ""),
+                        "tags": "|".join(form.get("tags", [])),
+                        "plugin": form.get("plugin", ""),
+                        "fallback_plugins": "|".join(form.get("fallback_plugins", [])),
+                        "platform": form.get("platform", ""),
+                        "url": form.get("url", ""),
+                        "quality": form.get("quality", "best"),
+                        "sport_id": form.get("sport_id", ""),
+                        "extra": json.dumps(form.get("extra", {}), ensure_ascii=False, sort_keys=True, indent=2),
+                    },
                 }
             )
         except Exception as exc:
             self.bridge.log.emit(f"读取详情失败：{redact_sensitive_text(str(exc))}")
-
-    async def _load_edit(self, follower_index: int) -> None:
-        try:
-            service = self._service_or_error()
-            status = service.followers.get(follower_index)
-            if status is None:
-                raise ValueError("选中的关注项已不存在")
-            if status.is_checking:
-                raise ValueError("该关注项正在检测，请等待本轮完成")
-            payload = follower_to_edit_payload(status.follower, redact=True)
-            payload.update(
-                {
-                    "stage": "form",
-                    "index": follower_index,
-                    "enabled": "true" if payload.get("enabled", True) else "false",
-                    "tags": "|".join(payload.get("tags", [])),
-                    "fallback_plugins": "|".join(payload.get("fallback_plugins", [])),
-                    "extra": json.dumps(payload.get("extra", {}), ensure_ascii=False, sort_keys=True, indent=2),
-                }
-            )
-            self.bridge.dialogData.emit("edit", payload)
-        except Exception as exc:
-            self._finish("edit", False, str(exc))
 
     async def _preview_edit(self, follower_index: int, values: dict) -> None:
         try:

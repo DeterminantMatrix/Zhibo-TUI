@@ -507,10 +507,10 @@ def test_quick_controller_filters_selects_and_dispatches_ready_actions():
     assert monitor.notification_count == 1
     assert monitor.stream_requests == [(2, "copy")]
 
+    # 编辑入口与详情合并：edit 打开右侧详情面板，不再走对话框。
     controller.action("edit")
-    assert controller.dialogKind == "edit"
-    assert controller.dialogBusy is True
-    assert monitor.dialog_requests == [("edit", 2)]
+    assert controller.detailsVisible is True
+    assert monitor.dialog_requests == [("details", 2)]
 
 
 def test_quick_controller_retries_next_cdn_when_mpv_exits_immediately(monkeypatch):
@@ -593,7 +593,7 @@ def test_quick_qml_keeps_all_previous_function_keys_and_shortcuts():
     assert "modelData.actionLabel" in (Path(__file__).parents[1] / "qt_quick" / "qml" / "DialogOverlay.qml").read_text(encoding="utf-8")
     assert 'text: "复制直播流地址  [C]"' in qml
     assert 'text: "复制直播间摘要  [Ctrl+Shift+C]"' in qml
-    assert 'text: "修改直播间信息  [E]"' in qml
+    assert 'text: "直播间详情与修改  [I]"' in qml
     assert 'text: "下载当前视频  [D]"' in qml
     assert 'text: "删除直播间"' in qml
     assert 'controller.action("delete")' in qml
@@ -1057,9 +1057,10 @@ def test_quick_remaining_advertised_shortcuts_are_wired(monkeypatch):
     controller.action("details")
     controller.hideDetails()
 
+    # 编辑入口与详情合并：E 键同样打开右侧详情面板。
     controller.action("edit")
-    controller._on_dialog_data("edit", {"stage": "form"})
-    controller.closeDialog()
+    assert controller.detailsVisible is True
+    controller.hideDetails()
     controller.action("settings")
     controller._on_dialog_data("settings", {"stage": "form"})
     controller.closeDialog()
@@ -1083,7 +1084,7 @@ def test_quick_remaining_advertised_shortcuts_are_wired(monkeypatch):
     assert opened == ["https://live.bilibili.com/1"]
     assert monitor.dialog_requests == [
         ("details", 1),
-        ("edit", 1),
+        ("details", 1),
         ("settings", None),
         ("proxy", None),
     ]
