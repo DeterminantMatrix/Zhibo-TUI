@@ -238,6 +238,11 @@ class QuickController(QObject):
     def statusText(self):
         return self._status_text
 
+    @Property(bool, notify=statusTextChanged)
+    def pollingActive(self):
+        """轮询进行中；状态栏样式用它驱动，不再嗅探文案。"""
+        return self._polling
+
     @Property(str, notify=summaryTextChanged)
     def summaryText(self):
         return self._summary_text

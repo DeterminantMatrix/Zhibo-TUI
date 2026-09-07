@@ -1491,3 +1491,13 @@ def test_quick_controller_busy_is_per_operation():
 
     controller._on_operation_finished("settings", True, "已保存", {"close": True})
     assert controller.dialogBusy is False
+
+
+def test_quick_controller_polling_active_tracks_poll_state():
+    controller = QuickController(_Monitor())
+    assert controller.pollingActive is False
+    controller.set_polling(True, 3)
+    assert controller.pollingActive is True
+    assert "检测中" in controller.statusText
+    controller.set_polling(False, 0)
+    assert controller.pollingActive is False

@@ -341,14 +341,14 @@ ApplicationWindow {
                 Rectangle {
                     Layout.preferredWidth: statusLabel.implicitWidth + 24
                     Layout.preferredHeight: 30
-                    color: controller.statusText.indexOf("检测中") >= 0 ? root.theme.statusBusyBg : root.theme.statusIdleBg
-                    border.color: controller.statusText.indexOf("检测中") >= 0 ? root.theme.statusBusyBorder : root.theme.statusIdleBorder
+                    color: controller.pollingActive ? root.theme.statusBusyBg : root.theme.statusIdleBg
+                    border.color: controller.pollingActive ? root.theme.statusBusyBorder : root.theme.statusIdleBorder
                     radius: 15
                     Text {
                         id: statusLabel
                         anchors.centerIn: parent
                         text: controller.statusText
-                        color: controller.statusText.indexOf("检测中") >= 0 ? root.yellow : root.accent
+                        color: controller.pollingActive ? root.yellow : root.accent
                         font.pixelSize: 11
                     }
                 }
