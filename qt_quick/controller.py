@@ -18,6 +18,7 @@ from qt_quick.viewmodel import (
     web_url_for_snapshot,
 )
 
+from .dialogs import DialogController
 from .model import COLUMNS, COLUMN_PRESETS, StreamTableModel
 from .worker import QuickMonitorThread
 
@@ -139,10 +140,12 @@ class QuickController(QObject):
         self._player_candidate_index = 0
         self._player_payload: dict = {}
         self._player_generation = 0
-        self._dialog_kind = ""
-        self._dialog_data: dict = {}
-        self._dialog_ops: set[str] = set()
-        self._dialog_error = ""
+        # 对话框状态机独立管理（见 qt_quick/dialogs.py）。
+        self.dialogs = DialogController(self)
+        self.dialogs.kindChanged.connect(self.dialogKindChanged.emit)
+        self.dialogs.dataChanged.connect(self.dialogDataChanged.emit)
+        self.dialogs.busyChanged.connect(self.dialogBusyChanged.emit)
+        self.dialogs.errorChanged.connect(self.dialogErrorChanged.emit)
         self._monitor_restarts = 0
         self._fatal_pending = ""
         self._shutting_down = False
@@ -163,7 +166,6 @@ class QuickController(QObject):
         sort_column = str(self._ui_settings.value("layout/sortColumn", "default"))
         self._sort_column = sort_column if sort_column in SORTABLE_COLUMNS else "default"
         self._sort_descending = self._ui_settings.value("layout/sortDescending", False, type=bool)
-        self._dialog_form_data: dict = {}
 
         bridge = monitor.bridge
         bridge.snapshot.connect(self.apply_snapshot)
@@ -253,23 +255,23 @@ class QuickController(QObject):
 
     @Property(str, notify=dialogKindChanged)
     def dialogKind(self):
-        return self._dialog_kind
+        return self.dialogs.kind
 
     @Property("QVariantMap", notify=dialogDataChanged)
     def dialogData(self):
-        return self._dialog_data
+        return self.dialogs.data
 
     @Property(str, notify=dialogDataChanged)
     def dialogStage(self):
-        return str(self._dialog_data.get("stage") or "")
+        return str(self.dialogs.data.get("stage") or "")
 
     @Property(bool, notify=dialogBusyChanged)
     def dialogBusy(self):
-        return bool(self._dialog_ops)
+        return bool(self.dialogs.ops)
 
     @Property(str, notify=dialogErrorChanged)
     def dialogError(self):
-        return self._dialog_error
+        return self.dialogs.error
 
     @Property(bool, notify=layoutStateChanged)
     def logVisible(self):
@@ -405,8 +407,8 @@ class QuickController(QObject):
 
     @Slot("QVariantMap")
     def testProxy(self, values) -> None:
-        self._begin_op("proxy")
-        self._set_dialog_error("")
+        self.dialogs.begin_op("proxy")
+        self.dialogs.set_error("")
         self.monitor.test_proxy(dict(values))
 
     def _load_column_widths(self, preset: str) -> list[int]:
@@ -552,79 +554,65 @@ class QuickController(QObject):
 
     @Slot()
     def closeDialog(self) -> None:
-        if self._dialog_ops:
-            return
-        self._set_dialog_kind("")
-        self._dialog_data = {}
-        self._dialog_form_data = {}
-        self.dialogDataChanged.emit()
-        self._set_dialog_error("")
+        self.dialogs.close()
 
     @Slot()
     def backToForm(self) -> None:
-        """确认页的"返回"回到表单并保留已输入内容；无表单时关闭对话框。"""
-        if self._dialog_ops:
-            return
-        if not self._dialog_form_data:
-            self.closeDialog()
-            return
-        self._dialog_data = dict(self._dialog_form_data)
-        self.dialogDataChanged.emit()
-        self._set_dialog_error("")
+        self.dialogs.back_to_form()
 
     @Slot("QVariantMap")
     def submitEdit(self, values) -> None:
-        if self._dialog_kind != "edit":
+        if self.dialogs.kind != "edit":
             return
-        index = int(self._dialog_data.get("index", self._selected_follower))
-        self._begin_op("edit")
-        self._set_dialog_error("")
+        index = int(self.dialogs.data.get("index", self._selected_follower))
+        self.dialogs.begin_op("edit")
+        self.dialogs.set_error("")
         self.monitor.preview_edit(index, dict(values))
 
     @Slot("QVariantMap")
     def submitSettings(self, values) -> None:
-        self._begin_op("settings")
-        self._set_dialog_error("")
+        self.dialogs.begin_op("settings")
+        self.dialogs.set_error("")
         self.monitor.preview_settings(dict(values))
 
     @Slot("QVariantMap")
     def submitProxy(self, values) -> None:
-        self._begin_op("proxy")
-        self._set_dialog_error("")
+        self.dialogs.begin_op("proxy")
+        self.dialogs.set_error("")
         self.monitor.save_proxy(dict(values))
 
     @Slot(str, str)
     def submitImport(self, url: str, tag: str) -> None:
-        self._begin_op("import")
-        self._set_dialog_error("")
+        self.dialogs.begin_op("import")
+        self.dialogs.set_error("")
         self.monitor.preview_import(url.strip(), tag.strip())
 
     @Slot()
     def confirmDialog(self) -> None:
-        if not self._dialog_kind:
+        if not self.dialogs.kind:
             return
-        self._begin_op(self._dialog_kind)
-        self._set_dialog_error("")
-        self.monitor.confirm_pending(self._dialog_kind)
+        self.dialogs.begin_op(self.dialogs.kind)
+        self.dialogs.set_error("")
+        self.monitor.confirm_pending(self.dialogs.kind)
 
     @Slot(str)
     def requestDownloadFormats(self, url: str) -> None:
-        self._begin_op("download")
-        self._set_dialog_error("")
+        self.dialogs.begin_op("download")
+        self.dialogs.set_error("")
         self.monitor.request_download_formats(url.strip())
 
     @Slot(int)
     def startDownload(self, format_index: int) -> None:
-        self._begin_op("download")
-        self._set_dialog_error("")
+        self.dialogs.begin_op("download")
+        self.dialogs.set_error("")
         self.monitor.start_download(format_index)
 
     @Slot(str, str)
     def submitUpdate(self, target: str, content: str) -> None:
-        self._dialog_data = {**self._dialog_data, "target": target}
-        self.dialogDataChanged.emit()
-        self._begin_op("update")
-        self._set_dialog_error("")
+        self.dialogs.data = {**self.dialogs.data, "target": target}
+        self.dialogs.emit_data()
+        self.dialogs.begin_op("update")
+        self.dialogs.set_error("")
         if target in {"mpv", "ffmpeg"}:
             # 更新会原子替换工具目录；正在运行的 mpv 会锁住 exe 导致失败。
             self._stop_player()
@@ -632,9 +620,9 @@ class QuickController(QObject):
 
     @Slot(str)
     def checkUpdate(self, target: str) -> None:
-        if self._dialog_kind != "update":
+        if self.dialogs.kind != "update":
             return
-        items = [dict(item) for item in self._dialog_data.get("items", [])]
+        items = [dict(item) for item in self.dialogs.data.get("items", [])]
         matched = False
         for item in items:
             if item.get("value") == target:
@@ -649,29 +637,29 @@ class QuickController(QObject):
                 break
         if not matched:
             return
-        self._dialog_data = {**self._dialog_data, "items": items, "target": target}
-        self.dialogDataChanged.emit()
-        self._begin_op("update")
-        self._set_dialog_error("")
+        self.dialogs.data = {**self.dialogs.data, "items": items, "target": target}
+        self.dialogs.emit_data()
+        self.dialogs.begin_op("update")
+        self.dialogs.set_error("")
         self.monitor.request_update_check(target)
 
     @Slot()
     def checkAllUpdate(self) -> None:
-        if self._dialog_kind != "update":
+        if self.dialogs.kind != "update":
             return
         self.monitor.request_update_check_all()
 
     @Slot()
     def continueUpdateCenter(self) -> None:
-        if self._dialog_kind != "update" or self._dialog_ops:
+        if self.dialogs.kind != "update" or self.dialogs.ops:
             return
-        self._dialog_data = {
-            **self._dialog_data,
+        self.dialogs.data = {
+            **self.dialogs.data,
             "stage": "form",
             "progress": 0,
             "progressText": "",
         }
-        self.dialogDataChanged.emit()
+        self.dialogs.emit_data()
 
     @Slot()
     def windowHidden(self) -> None:
@@ -792,129 +780,34 @@ class QuickController(QObject):
         self.monitor.request_update_status()
 
     def _show_dialog(self, kind: str, data: dict, *, busy: bool = False) -> None:
-        self._set_dialog_kind(kind)
-        self._dialog_data = dict(data)
-        self._dialog_form_data = {}
-        self.dialogDataChanged.emit()
-        if busy:
-            self._begin_op(kind)
-        self._set_dialog_error("")
+        self.dialogs.show(kind, data, busy=busy)
         self._set_progress(-1.0, "")
-
-    def _set_dialog_kind(self, value: str) -> None:
-        if value != self._dialog_kind:
-            self._dialog_kind = value
-            self.dialogKindChanged.emit()
-
-    def _begin_op(self, kind: str) -> None:
-        """登记一个在途操作；只有同 kind 的完成事件才会解除它。"""
-        if kind and kind not in self._dialog_ops:
-            self._dialog_ops.add(kind)
-            self.dialogBusyChanged.emit()
-
-    def _end_op(self, kind: str) -> None:
-        if kind in self._dialog_ops:
-            self._dialog_ops.discard(kind)
-            self.dialogBusyChanged.emit()
-
-    def _set_dialog_error(self, value: str) -> None:
-        value = redact_sensitive_text(value)
-        if value != self._dialog_error:
-            self._dialog_error = value
-            self.dialogErrorChanged.emit()
 
     @Slot(str, object)
     def _on_dialog_data(self, kind: str, payload) -> None:
-        self._set_dialog_kind(kind)
-        incoming = dict(payload)
-        if kind == "update" and incoming.get("stage") == "checked":
-            target = str(incoming.get("target") or "")
-            patch = dict(incoming.get("item") or {})
-            items = [dict(item) for item in self._dialog_data.get("items", [])]
-            for item in items:
-                if item.get("value") == target:
-                    item.update(patch)
-                    break
-            self._dialog_data = {
-                **self._dialog_data,
-                "stage": "form",
-                "target": target,
-                "items": items,
-            }
-        elif kind == "update" and incoming.get("stage") in {"progress", "done"}:
-            self._dialog_data = {**self._dialog_data, **incoming}
+        self.dialogs.apply_incoming(kind, dict(payload))
+        incoming = self.dialogs.data
+        if kind == "update" and incoming.get("stage") in {"progress", "done"}:
             self._set_progress(
                 float(incoming.get("progress", -1.0)),
                 str(incoming.get("progressText", "")),
             )
-        else:
-            if (
-                kind == self._dialog_kind
-                and str(self._dialog_data.get("stage")) == "form"
-                and str(incoming.get("stage")) == "confirm"
-            ):
-                # 记住表单内容，确认页"返回"时原样恢复。
-                self._dialog_form_data = dict(self._dialog_data)
-            self._dialog_data = incoming
-        self.dialogDataChanged.emit()
-        self._end_op(kind)
-        self._set_dialog_error("")
 
     @Slot(str, bool, str, object)
     def _on_operation_finished(self, kind: str, success: bool, message: str, payload) -> None:
-        data = dict(payload)
-        self._end_op(kind)
         if message:
             self.append_log(message)
-        if success:
-            self._set_dialog_error("")
-            if data.get("close"):
-                self.closeDialog()
-            elif self._dialog_kind == kind and data.get("done"):
-                done_state = {
-                    **self._dialog_data,
-                    "stage": "done",
-                    "progress": 100,
-                    "progressText": message,
-                }
-                if kind == "update":
-                    items = [dict(item) for item in self._dialog_data.get("items", [])]
-                    target = str(data.get("target") or self._dialog_data.get("target") or "")
-                    if data.get("downloaded") is True:
-                        for item in items:
-                            if item.get("value") != target:
-                                continue
-                            if data.get("version"):
-                                item["version"] = str(data["version"])
-                                item["installed"] = True
-                            item["lastUpdated"] = "刚刚"
-                            if item.get("kind") in {"tool", "package"}:
-                                item.update(
-                                    actionLabel="检查更新",
-                                    actionEnabled=True,
-                                    actionKind="check",
-                                    updateStatus="unchecked",
-                                    updateHint="更新完成；可按需再次检查",
-                                    remoteVersion="",
-                                    downloadSize="",
-                                )
-                            break
-                    done_state.update(target=target, items=items)
-                self._dialog_data = done_state
-                self.dialogDataChanged.emit()
-        else:
-            self._set_dialog_error(message or "操作失败")
-            if kind == "update" and self._dialog_kind == "update":
-                self._dialog_data = {
-                    **self._dialog_data,
-                    "stage": "failed",
-                    "progressText": message or "更新失败",
-                }
-                self.dialogDataChanged.emit()
+        close, new_data = self.dialogs.apply_result(kind, success, message, dict(payload))
+        if close:
+            self.closeDialog()
+            return
+        if new_data is not None:
+            self.dialogs.data = new_data
+            self.dialogs.emit_data()
 
     @Slot(str, float, str)
     def _on_progress(self, kind: str, value: float, message: str) -> None:
-        if self._dialog_kind != kind:
+        if self.dialogs.kind != kind:
             return
         # 高频 tick 只更新专用属性；重建 dialogData 会让进度条列表
         # 的所有卡片在每 256KB 块时被整批重建。
