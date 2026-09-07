@@ -42,7 +42,7 @@ class QuickMonitorBridge(QObject):
     operationFinished = Signal(str, bool, str, object)
     progress = Signal(str, float, str)
     # 开播/下播事件（含初始结果标记），供托盘通知使用。
-    liveEvent = Signal(bool, str, str, bool)
+    liveEvent = Signal(int, bool, str, str, bool)
     stopped = Signal()
 
 
@@ -1201,11 +1201,12 @@ class QuickMonitorThread:
             }
         )
 
-    def _on_status_change(self, _idx, status) -> None:
+    def _on_status_change(self, idx, status) -> None:
         direction = "↑" if status.live_info.is_live else "↓"
         action = "开播" if status.live_info.is_live else "下播"
         self.bridge.log.emit(f"{direction} {status.follower.name} {action}")
         self.bridge.liveEvent.emit(
+            idx,
             bool(status.live_info.is_live),
             status.follower.name,
             status.live_info.title or "",

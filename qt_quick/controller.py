@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Property, QSettings, QTimer, Signal, Slot
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from zhibo.app_logging import redact_sensitive_text
-from zhibo.desktop import play_url
+from zhibo.desktop import mpv_command, new_mpv_ipc_path, play_url
 from zhibo.quality_options import quality_options as available_quality_options
 from qt_quick.viewmodel import (
     SORTABLE_COLUMNS,
@@ -107,7 +107,7 @@ class QuickController(QObject):
     layoutStateChanged = Signal()
     themeChanged = Signal()
     trayAvailabilityChanged = Signal()
-    notificationRequested = Signal(str, str)
+    notificationRequested = Signal(int, str, str)
     sortChanged = Signal()
     playingFollowerChanged = Signal()
     logAppended = Signal(str)
@@ -140,6 +140,9 @@ class QuickController(QObject):
         self._player_candidate_index = 0
         self._player_payload: dict = {}
         self._player_generation = 0
+        self._player_ipc = ""
+        # 最近一条开播通知对应的主播；点击通知直接播放。
+        self._notify_play_idx = -1
         # 对话框状态机独立管理（见 qt_quick/dialogs.py）。
         self.dialogs = DialogController(self)
         self.dialogs.kindChanged.connect(self.dialogKindChanged.emit)
@@ -334,13 +337,23 @@ class QuickController(QObject):
         self._tray_available = available
         self.trayAvailabilityChanged.emit()
 
-    @Slot(bool, str, str, bool)
-    def _on_live_event(self, is_live: bool, name: str, title: str, is_initial: bool) -> None:
+    @Slot(int, bool, str, str, bool)
+    def _on_live_event(self, idx: int, is_live: bool, name: str, title: str, is_initial: bool) -> None:
         """把开播事件转成托盘通知请求；下播和启动时的初始结果不通知。"""
         if not is_live or is_initial or not self._notifications_enabled:
             return
+        self._notify_play_idx = idx
         message = title.strip() or "正在直播"
-        self.notificationRequested.emit(f"{name} 开播了", message)
+        self.notificationRequested.emit(idx, f"{name} 开播了", message)
+
+    @Slot()
+    def notificationClicked(self) -> None:
+        """点击开播通知：唤起窗口并直接播放对应直播间。"""
+        self.showRequested.emit()
+        idx = self._notify_play_idx
+        if idx >= 0:
+            self.selectFollower(idx)
+            self._request_stream("play")
 
     @Property("QVariantMap", notify=themeChanged)
     def themePalette(self):
@@ -725,7 +738,7 @@ class QuickController(QObject):
         self._fatal_pending = ""
         if self._monitor_restarts >= MAX_MONITOR_RESTARTS:
             self.append_log("监控核心连续异常退出，已停止自动重启")
-            self.notificationRequested.emit("监控核心已停止", "多次自动重启失败；请查看日志后重启程序")
+            self.notificationRequested.emit(-1, "监控核心已停止", "多次自动重启失败；请查看日志后重启程序")
             QMessageBox.critical(
                 None,
                 "监控核心已停止",
@@ -735,7 +748,7 @@ class QuickController(QObject):
         self._monitor_restarts += 1
         attempt = self._monitor_restarts
         self.append_log(f"监控核心将在 {MONITOR_RESTART_DELAY_MS // 1000} 秒后自动重启（第 {attempt}/{MAX_MONITOR_RESTARTS} 次）")
-        self.notificationRequested.emit("监控核心异常", f"{message}；即将自动重启（第 {attempt} 次）")
+        self.notificationRequested.emit(-1, "监控核心异常", f"{message}；即将自动重启（第 {attempt} 次）")
         QTimer.singleShot(MONITOR_RESTART_DELAY_MS, self._restart_monitor)
 
     def _restart_monitor(self) -> None:
@@ -905,6 +918,7 @@ class QuickController(QObject):
         if purpose == "play":
             self._stop_player()
             self._set_playing_follower(int(data.get("idx", -1)))
+            self._player_ipc = new_mpv_ipc_path()
             self._player_candidates = list(dict.fromkeys(str(item) for item in (data.get("urls") or [url]) if item))
             self._player_candidate_index = 0
             self._player_payload = data
@@ -927,6 +941,7 @@ class QuickController(QObject):
                 headers=dict(self._player_payload.get("headers", {})),
                 proxy_url=str(self._player_payload.get("proxy", "")),
                 use_cache=True,
+                ipc_path=self._player_ipc,
             )
         except Exception as exc:
             self.append_log(f"CDN 候选启动失败：{exc}")
@@ -951,6 +966,7 @@ class QuickController(QObject):
         self._player_candidates = []
         self._player_candidate_index = 0
         self._set_playing_follower(-1)
+        self._player_ipc = ""
         process = self._player_process
         self._player_process = None
         if process is None or process.poll() is not None:
@@ -998,6 +1014,32 @@ class QuickController(QObject):
             self.append_log("系统托盘不可用，窗口保持显示")
             return
         self.hideRequested.emit()
+
+    # ---- mpv 控制（经 --input-ipc-server 命名管道） ----------------------
+
+    def _send_mpv(self, *command: str) -> None:
+        process = self._player_process
+        if process is None or process.poll() is not None:
+            self.append_log("mpv 当前没有正在播放")
+            return
+        if not mpv_command(self._player_ipc, *command):
+            self.append_log("无法连接 mpv 控制通道")
+
+    @Slot()
+    def playerTogglePause(self) -> None:
+        self._send_mpv("cycle", "pause")
+
+    @Slot()
+    def playerVolumeUp(self) -> None:
+        self._send_mpv("add", "volume", "5")
+
+    @Slot()
+    def playerVolumeDown(self) -> None:
+        self._send_mpv("add", "volume", "-5")
+
+    @Slot()
+    def playerMuteToggle(self) -> None:
+        self._send_mpv("cycle", "mute")
 
     def _cycle_filter(self) -> None:
         values = ["全部", "在线", "离线", "异常"]

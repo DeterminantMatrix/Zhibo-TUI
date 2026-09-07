@@ -99,6 +99,27 @@ ApplicationWindow {
         onActivated: controller.action("refresh")
     }
 
+    Shortcut {
+        sequence: "Ctrl+Up"
+        context: Qt.ApplicationShortcut
+        onActivated: controller.playerVolumeUp()
+    }
+    Shortcut {
+        sequence: "Ctrl+Down"
+        context: Qt.ApplicationShortcut
+        onActivated: controller.playerVolumeDown()
+    }
+    Shortcut {
+        sequence: "Ctrl+M"
+        context: Qt.ApplicationShortcut
+        onActivated: controller.playerMuteToggle()
+    }
+    Shortcut {
+        sequence: "Ctrl+P"
+        context: Qt.ApplicationShortcut
+        onActivated: controller.playerTogglePause()
+    }
+
     function exitWindow() {
         allowClose = true
         close()
@@ -903,6 +924,11 @@ ApplicationWindow {
         TuiMenuItem { text: "下载视频  [D]"; onTriggered: controller.action("download") }
         TuiMenuItem { text: "平台代理  [P]"; onTriggered: controller.action("proxy") }
         TuiMenuItem { text: "切换筛选  [O]"; onTriggered: controller.action("filter") }
+        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: root.line } }
+        TuiMenuItem { text: "暂停/继续播放  [Ctrl+P]"; onTriggered: controller.playerTogglePause() }
+        TuiMenuItem { text: "音量 +  [Ctrl+↑]"; onTriggered: controller.playerVolumeUp() }
+        TuiMenuItem { text: "音量 −  [Ctrl+↓]"; onTriggered: controller.playerVolumeDown() }
+        TuiMenuItem { text: "静音  [Ctrl+M]"; onTriggered: controller.playerMuteToggle() }
         MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: root.line } }
         TuiMenuItem { text: "隐藏到托盘  [H]"; onTriggered: controller.action("tray") }
         TuiMenuItem { text: "退出程序  [T]"; onTriggered: controller.action("quit") }

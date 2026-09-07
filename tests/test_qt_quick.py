@@ -1,3 +1,4 @@
+import builtins
 import os
 import asyncio
 import subprocess
@@ -29,7 +30,7 @@ class _Bridge(QObject):
     dialogData = Signal(str, object)
     operationFinished = Signal(str, bool, str, object)
     progress = Signal(str, float, str)
-    liveEvent = Signal(bool, str, str, bool)
+    liveEvent = Signal(int, bool, str, str, bool)
     stopped = Signal()
 
 
@@ -167,24 +168,83 @@ def test_quick_controller_persists_layout_choices(tmp_path):
 def test_quick_controller_emits_notification_only_for_confirmed_live_start():
     controller = QuickController(_Monitor())
     received = []
-    controller.notificationRequested.connect(lambda title, message: received.append((title, message)))
+    controller.notificationRequested.connect(lambda idx, title, message: received.append((idx, title, message)))
 
     controller.apply_snapshot({"rows": [], "tags": ["全部"], "notifications_enabled": True})
 
-    controller._on_live_event(False, "主播", "标题", False)
-    controller._on_live_event(True, "主播", "标题", True)
+    controller._on_live_event(7, False, "主播", "标题", False)
+    controller._on_live_event(7, True, "主播", "标题", True)
     assert received == []
 
-    controller._on_live_event(True, "主播", "开播啦", False)
-    assert received == [("主播 开播了", "开播啦")]
+    controller._on_live_event(7, True, "主播", "开播啦", False)
+    assert received == [(7, "主播 开播了", "开播啦")]
 
     controller.apply_snapshot({"rows": [], "tags": ["全部"], "notifications_enabled": False})
-    controller._on_live_event(True, "主播", "开播啦", False)
+    controller._on_live_event(7, True, "主播", "开播啦", False)
     assert len(received) == 1
 
     controller.apply_snapshot({"rows": [], "tags": ["全部"], "notifications_enabled": True})
-    controller._on_live_event(True, "主播", "  ", False)
-    assert received[-1] == ("主播 开播了", "正在直播")
+    controller._on_live_event(7, True, "主播", "  ", False)
+    assert received[-1] == (7, "主播 开播了", "正在直播")
+
+
+def test_quick_controller_notification_click_restores_and_plays():
+    monitor = _Monitor()
+    controller = QuickController(monitor)
+    controller.apply_snapshot({"rows": [_row(9, live=True)], "tags": ["全部"]})
+    shown = []
+    controller.showRequested.connect(lambda: shown.append(1))
+
+    controller._on_live_event(9, True, "主播", "标题", False)
+    controller.notificationClicked()
+
+    assert shown == [1]
+    assert controller.selectedFollower == 9
+    assert monitor.stream_requests == [(9, "play")]
+
+    # 没有待播放通知时，点击只唤起窗口。
+    controller._notify_play_idx = -1
+    controller.notificationClicked()
+    assert shown == [1, 1]
+    assert monitor.stream_requests == [(9, "play")]
+
+
+def test_player_ipc_commands_require_active_mpv(monkeypatch):
+    import zhibo.desktop as desktop_mod
+
+    written = []
+
+    class FakePipe:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def write(self, data):
+            written.append(data)
+
+    monkeypatch.setattr(
+        builtins, "open", lambda path, mode="r", **kw: FakePipe() if "pipe" in str(path) else open(path, mode, **kw)
+    )
+
+    # 没有活跃 mpv 时不写管道。
+    controller = QuickController(_Monitor())
+    controller.playerTogglePause()
+    assert written == []
+
+    controller._player_ipc = r"\.\pipe\zhibo-mpv-test"
+    controller._player_process = subprocess.Popen  # 任意非 None 且 poll() 非 None 的对象不满足，用真桩
+
+    class Live:
+        def poll(self):
+            return None
+
+    controller._player_process = Live()
+    controller.playerVolumeUp()
+    assert written == ['{"command": ["add", "volume", "5"]}\n']
+    controller.playerTogglePause()
+    assert written[-1] == '{"command": ["cycle", "pause"]}\n'
 
 
 def test_quick_controller_tray_guard_blocks_hide_when_unavailable():
@@ -212,7 +272,7 @@ def test_quick_controller_restarts_monitor_after_fatal_with_limit(monkeypatch):
     monitor = _Monitor()
     controller = QuickController(monitor)
     notified = []
-    controller.notificationRequested.connect(lambda title, _message: notified.append(title))
+    controller.notificationRequested.connect(lambda _idx, title, _message: notified.append(title))
 
     for _ in range(quick_controller_module.MAX_MONITOR_RESTARTS):
         monitor.bridge.fatal.emit("boom")

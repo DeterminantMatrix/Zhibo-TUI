@@ -119,12 +119,14 @@ def main(argv: list[str] | None = None) -> int:
         controller.hideRequested.connect(lambda: _invoke(root, "hideWindow"))
         controller.showRequested.connect(lambda: _invoke(root, "restoreWindow"))
         tray.activated.connect(
-            lambda reason: _invoke(root, "restoreWindow")
+            lambda reason: controller.notificationClicked()
+            if reason == QSystemTrayIcon.ActivationReason.MessageClicked
+            else _invoke(root, "restoreWindow")
             if reason in {QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick}
             else None
         )
         controller.notificationRequested.connect(
-            lambda title, message: tray.showMessage(
+            lambda _idx, title, message: tray.showMessage(
                 title,
                 message,
                 QSystemTrayIcon.MessageIcon.Information,
