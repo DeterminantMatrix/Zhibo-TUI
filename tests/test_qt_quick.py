@@ -535,7 +535,7 @@ def test_quick_qml_keeps_all_previous_function_keys_and_shortcuts():
     assert "root.startSystemResize(resizeEdges)" in qml
     assert 'objectName: "logScroll"' in qml
     assert 'ScrollBar.vertical: ScrollBar' in qml
-    assert 'policy: ScrollBar.AlwaysOn' in qml
+    assert 'policy: ScrollBar.AsNeeded' in qml
     assert 'objectName: "logPanel"' in qml
     assert 'objectName: cell.column === 5 ? "qualitySelector-" + cell.followerIndex' in qml
     assert "controller.setFollowerQuality(cell.followerIndex, currentValue)" in qml
