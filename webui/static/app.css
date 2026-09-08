@@ -57,25 +57,128 @@ html, body {
   background: #c0c0c0;
 }
 
+/* 工具栏 */
+.toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  background: #c0c0c0;
+}
+.toolbar button { min-width: 0; height: 26px; font-size: 11px; }
+.toolbar-sep {
+  width: 2px; height: 22px;
+  border-left: 1px solid #808080;
+  border-right: 1px solid #dfdfdf;
+  margin: 0 4px;
+}
+.search-box { width: 240px; font-size: 11px; padding: 2px 4px; }
+.filter-label { font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.filter-label select { font-size: 11px; }
+
+/* 标签页（98 资源管理器式标签条） */
+.tag-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px 6px 0;
+  background: #c0c0c0;
+}
+.tag-tab {
+  border: 1px solid;
+  border-color: #dfdfdf #808080 #808080 #dfdfdf;
+  background: #c0c0c0;
+  padding: 2px 10px;
+  font-size: 11px;
+  min-width: 0;
+  height: auto;
+}
+.tag-tab.active {
+  border-color: #808080 #dfdfdf #dfdfdf #808080;
+  background: #dfdfdf;
+  font-weight: bold;
+}
+
+/* 表格 */
+.table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 6px 4px;
+  background: #fff;
+  border: 1px solid;
+  border-color: #808080 #dfdfdf #dfdfdf #808080;
+  position: relative;
+}
+#streamTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11px;
+  table-layout: fixed;
+}
+#streamTable th {
+  position: sticky; top: 0;
+  background: #c0c0c0;
+  border: 1px solid;
+  border-color: #dfdfdf #808080 #808080 #dfdfdf;
+  padding: 3px 6px;
+  text-align: left;
+  font-weight: normal;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+#streamTable th:hover { background: #d4d0c8; }
+#streamTable td {
+  border-right: 1px solid #dfdfdf;
+  border-bottom: 1px solid #dfdfdf;
+  padding: 2px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#streamTable tbody tr { cursor: default; }
+#streamTable tbody tr:hover { background: #e8e8f8; }
+#streamTable tbody tr.selected { background: #000080; color: #fff; }
+#streamTable tbody tr.selected select { color: #000; }
+.col-status { width: 52px; }
+.col-narrow { width: 56px; }
+#streamTable th[data-key="quality"], #streamTable th[data-key="plugin"] { width: 108px; }
+#streamTable td select {
+  width: 100%;
+  font-size: 11px;
+  padding: 0 2px;
+  border: 1px solid #808080;
+  background: #fff;
+}
+
+/* 状态圆点 */
+.dot { display: inline-block; width: 9px; height: 9px; line-height: 9px; border-radius: 50%; text-align: center; font-size: 9px; }
+.dot-live     { background: #00a000; box-shadow: inset -1px -1px 0 #006000; }
+.dot-offline  { background: #9a9a9a; box-shadow: inset -1px -1px 0 #6a6a6a; }
+.dot-checking { background: #c8a800; box-shadow: inset -1px -1px 0 #8a7000; }
+.dot-disabled { background: #c0c0c0; border: 1px solid #808080; }
+.err-text { color: #b00000; }
+tr.selected .err-text { color: #ff9090; }
+
+.empty-hint {
+  display: none;
+  padding: 24px;
+  text-align: center;
+  color: #606060;
+  font-size: 11px;
+}
+.empty-hint.show { display: block; }
+
 /* 状态栏铺满并分格 */
 .status-bar {
   flex: 0 0 auto;
   display: flex;
   gap: 2px;
 }
+.status-bar-field { font-size: 11px; }
 .status-bar-grow {
   flex: 1 1 auto;
-}
-
-/* P0 占位 */
-.placeholder {
-  margin: 32px auto;
-  max-width: 520px;
-  text-align: center;
-  font-size: 12px;
-  line-height: 1.8;
-}
-.placeholder-title {
-  font-weight: bold;
-  margin-bottom: 8px;
 }

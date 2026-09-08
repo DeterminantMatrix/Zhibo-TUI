@@ -13,6 +13,8 @@ import webview
 
 from zhibo.single_instance import COMMAND_SHOW, SingleInstance, notify_existing_instance
 from webui.api import ZhiboApi
+from webui.events import EventPusher
+from webui.service import WebMonitorService
 from webui.tray import TrayController
 
 
@@ -29,6 +31,8 @@ def main(argv: list[str] | None = None) -> int:
         print("直播监控工具（Web 版）已在运行，已请求显示现有窗口。")
         return 1
 
+    pusher = EventPusher()
+    service = WebMonitorService(pusher)
     api = ZhiboApi()
     window = webview.create_window(
         "直播监控工具",
@@ -42,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
         background_color="#008080",
     )
     api.attach(window)
+    api.attach_service(service)
+    pusher.attach(window)
 
     tray = TrayController(
         icon_path=PROJECT_ROOT / "qt_quick" / "assets" / "tray.ico",
@@ -73,7 +79,14 @@ def main(argv: list[str] | None = None) -> int:
         timer.daemon = True
         timer.start()
 
-    webview.start()
+    def start_after_gui() -> None:
+        # evaluate_js 只能在 GUI 启动后调用；推送与监控线程随 GUI 起动。
+        pusher.start()
+        service.start()
+
+    webview.start(start_after_gui)
+    pusher.stop()
+    service.stop()
     tray.stop()
     instance.close()
     return 0

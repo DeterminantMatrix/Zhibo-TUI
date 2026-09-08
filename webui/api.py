@@ -1,6 +1,6 @@
 """JS 桥 — 前端通过 window.pywebview.api.* 调用的 Python 接口。
 
-P0 只包含窗口控制；监控/配置/播放等业务方法在后续阶段加入。
+P0/P1：窗口控制 + 快照/刷新/画质/插件。
 """
 from __future__ import annotations
 
@@ -8,10 +8,14 @@ from __future__ import annotations
 class ZhiboApi:
     def __init__(self) -> None:
         self._window = None
+        self._service = None
         self._quitting = False
 
     def attach(self, window) -> None:
         self._window = window
+
+    def attach_service(self, service) -> None:
+        self._service = service
 
     @property
     def quitting(self) -> bool:
@@ -56,3 +60,22 @@ class ZhiboApi:
             window.destroy()
         except Exception:
             pass
+
+    # ---- P1：监控数据 ---------------------------------------------------
+
+    def getSnapshot(self) -> dict:
+        if self._service is None:
+            return {}
+        return self._service.snapshot()
+
+    def refresh(self) -> None:
+        if self._service is not None:
+            self._service.refresh()
+
+    def setQuality(self, follower_index: int, quality: str) -> None:
+        if self._service is not None:
+            self._service.set_quality(int(follower_index), str(quality))
+
+    def setPlugin(self, follower_index: int, plugin: str) -> None:
+        if self._service is not None:
+            self._service.set_plugin(int(follower_index), str(plugin))
