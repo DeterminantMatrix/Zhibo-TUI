@@ -222,6 +222,50 @@ body.theme-dark #streamTable tbody tr.selected select { color: #eee; }
 body.theme-dark .err-text { color: #ff8080; }
 tr.selected .err-text { color: #ff9090; }
 
+/* 正在播放行：状态列 ▶ 前缀 */
+.play-mark { color: #00a800; margin-left: 4px; font-size: 11px; }
+body.theme-dark .play-mark { color: #5fd75f; }
+tr.selected .play-mark { color: #b0ffb0; }
+
+/* ---------- P3 右键菜单（Win98 弹出式：亮边在外、选中反色） ---------- */
+.context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 172px;
+  padding: 2px;
+  background: var(--win-face);
+  border: 1px solid;
+  border-color: var(--win-light) var(--win-shadow) var(--win-shadow) var(--win-light);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.35);
+}
+.context-menu[hidden] { display: none; }
+.ctx-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 4px 20px 4px 10px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--field-text);
+}
+.ctx-item:hover {
+  background: #000080;
+  color: #ffffff;
+  border-color: transparent;
+}
+.ctx-danger { color: #c00000; }
+body.theme-dark .ctx-danger { color: #ff9090; }
+.ctx-danger:hover { background: #a00000; color: #ffffff; }
+.ctx-sep {
+  height: 0;
+  margin: 3px 2px;
+  border-top: 1px solid var(--win-shadow);
+  border-bottom: 1px solid var(--win-light);
+}
+
 .empty-hint {
   display: none;
   padding: 24px;

@@ -52,6 +52,30 @@ PROBE_JS = r"""
     if (close) close.click();
     await sleep(300);
     out.importClosed = document.getElementById('dialogOverlay').hidden;
+
+    // 右键菜单链路：contextmenu 事件 → 菜单打开 → 点"详情与修改" → edit 对话框。
+    let firstRow = null;
+    for (let i = 0; i < 40 && !firstRow; i++) {
+      firstRow = document.querySelector('#tableBody tr');
+      if (!firstRow) await sleep(200);
+    }
+    out.hasRow = !!firstRow;
+    if (firstRow) {
+      firstRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await sleep(300);
+      out.menuOpened = !document.getElementById('ctxMenu').hidden;
+      const detailItem = [...document.querySelectorAll('.ctx-item')].find(
+        (b) => b.textContent.includes('详情')
+      );
+      out.menuDetailFound = !!detailItem;
+      if (detailItem) detailItem.click();
+      await sleep(1500);
+      out.menuEditDialog = window.zhibo.dialog.kind === 'edit';
+      close = findBtn('关闭');
+      if (close) close.click();
+      await sleep(300);
+      out.menuEditClosed = document.getElementById('dialogOverlay').hidden;
+    }
   } catch (err) {
     out.error = String((err && err.message) || err);
   }
@@ -110,5 +134,10 @@ def verdict(checks: dict[str, Any]) -> tuple[bool, str]:
         and bool(checks.get("backFound"))
         and bool(checks.get("importBackToForm"))
         and bool(checks.get("importClosed"))
+        and bool(checks.get("hasRow"))
+        and bool(checks.get("menuOpened"))
+        and bool(checks.get("menuDetailFound"))
+        and bool(checks.get("menuEditDialog"))
+        and bool(checks.get("menuEditClosed"))
     )
     return ok, json.dumps(checks, ensure_ascii=False)

@@ -15,6 +15,7 @@ import webview
 from zhibo.single_instance import COMMAND_SHOW, SingleInstance, notify_existing_instance
 from webui.api import ZhiboApi
 from webui.events import EventPusher
+from webui.notify import Notifier, ensure_protocol_registered, parse_notify_uri
 from webui.service import WebMonitorService
 from webui.smoke import run_dialog_probe, verdict
 from webui.tray import TrayController
@@ -23,9 +24,30 @@ from webui.tray import TrayController
 INSTANCE_KEY = f"{str(PROJECT_ROOT).casefold()}::webui"
 
 
+def _extract_notify_play(argv: list[str]) -> int:
+    """--notify-play zhibo://play/N → N；没有或非法返回 -1。"""
+    if "--notify-play" not in argv:
+        return -1
+    index = argv.index("--notify-play")
+    if index + 1 >= len(argv):
+        return -1
+    return parse_notify_uri(argv[index + 1])
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     smoke = "--smoke-test" in argv
+
+    # 通知点击路径：转发给运行中的实例后直接退出；没有实例则正常启动。
+    notify_idx = _extract_notify_play(argv)
+    if notify_idx >= 0:
+        if notify_existing_instance(f"play:{notify_idx}", key=INSTANCE_KEY):
+            return 0
+        # 没有运行中的实例：忽略播放请求，按普通启动走。
+        while "--notify-play" in argv:
+            index = argv.index("--notify-play")
+            del argv[index:index + 2]
+        notify_idx = -1
 
     instance = SingleInstance(f"{INSTANCE_KEY}::smoke" if smoke else INSTANCE_KEY)
     if not instance.acquire():
@@ -51,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
     api.attach_service(service)
     pusher.attach(window)
 
+    # 开播 toast + zhibo:// 协议（点击通知 = 唤起窗口并播放）。
+    notifier = Notifier()
+    service.notify_hook = notifier.notify_live
+    if not ensure_protocol_registered():
+        service._log("zhibo:// 协议注册失败：通知点击将无法唤起播放")
+
     tray = TrayController(
         icon_path=PROJECT_ROOT / "qt_quick" / "assets" / "tray.ico",
         tooltip="直播监控工具 · Web",
@@ -71,9 +99,19 @@ def main(argv: list[str] | None = None) -> int:
         return True
 
     window.events.closing += on_closing
-    instance.set_command_handler(
-        lambda command: window.show() if command == COMMAND_SHOW else None
-    )
+
+    def handle_command(command: str) -> None:
+        if command == COMMAND_SHOW:
+            window.show()
+        elif command.startswith("play:"):
+            # 通知点击转发：唤起窗口并直接播放对应直播间。
+            window.show()
+            try:
+                service.play(int(command[5:]))
+            except ValueError:
+                pass
+
+    instance.set_command_handler(handle_command)
 
     probe_result: dict = {}
 

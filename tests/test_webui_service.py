@@ -274,3 +274,144 @@ def test_import_preview_and_confirm_roundtrip():
         _plugins.clear()
         _plugins.update(previous)
         Path(fpath).unlink(missing_ok=True)
+
+
+# ---- P3：播放与行操作 ------------------------------------------------------
+
+
+def _wait_idle(collector):
+    return _wait_for(collector, lambda evs: any(
+        k == "polling" and not p.get("active") for k, p in evs
+    ))
+
+
+def test_toggle_enabled_roundtrip():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        assert _wait_idle(collector)
+        service.toggle_enabled(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "toggle_enabled" and p["ok"]
+            for k, p in evs
+        ))
+        assert service._service.cfg.followers[0].enabled is False
+
+        collector.events.clear()
+        service.toggle_enabled(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "toggle_enabled" and p["ok"]
+            for k, p in evs
+        ))
+        assert service._service.cfg.followers[0].enabled is True
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_delete_transaction_roundtrip():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n"
+        "true,主播二,LOL,webui_offline,,douyu,https://douyu.com/2,best,\n", collector
+    )
+    try:
+        assert _wait_idle(collector)
+        service.preview_delete(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "delete" and p["payload"].get("stage") == "confirm"
+            for k, p in evs
+        ))
+        confirm = _last_dialog(collector, "delete")
+        assert "主播一" in confirm["previewText"]
+
+        collector.events.clear()
+        service.confirm_dialog("delete")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "delete" and p["ok"]
+            and p["payload"].get("close") for k, p in evs
+        ))
+        assert len(service._service.cfg.followers) == 1
+        assert service._service.cfg.followers[0].name == "主播二"
+        # 运行时下标重排：剩余行占用 0 号。
+        assert 0 in service._service.followers and 1 not in service._service.followers
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_play_offline_plugin_reports_failure():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        assert _wait_idle(collector)
+        collector.events.clear()
+        service.play(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "log" and "获取直播流失败" in p.get("text", "") for k, p in evs
+        ))
+        # 失败路径不得进入播放状态。
+        assert not any(
+            k == "playerState" and p.get("playing") for k, p in collector.events
+        )
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_open_web_and_player_control(monkeypatch):
+    import webui.service as service_module
+
+    opened: list[str] = []
+    monkeypatch.setattr(service_module.webbrowser, "open", lambda url: opened.append(url) or True)
+
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        assert _wait_idle(collector)
+        service.open_web(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "log" and "已在浏览器打开" in p.get("text", "") for k, p in evs
+        ))
+        assert opened and opened[0].startswith("https://")
+
+        collector.events.clear()
+        service.player_control("volume_up")
+        assert _wait_for(collector, lambda evs: any(
+            k == "log" and "mpv 当前没有正在播放" in p.get("text", "") for k, p in evs
+        ))
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_notify_uri_and_dry_run_notifier():
+    from webui.notify import Notifier, notify_uri_for, parse_notify_uri
+
+    assert notify_uri_for(7) == "zhibo://play/7"
+    assert parse_notify_uri("zhibo://play/12") == 12
+    assert parse_notify_uri("zhibo://play/abc") == -1
+    assert parse_notify_uri("zhibo://play/") == -1
+    assert parse_notify_uri("https://elsewhere/3") == -1
+
+    notifier = Notifier(dry_run=True)
+    notifier.notify_live(3, "老苗", "布冬日 vs 维拉")
+    notifier.notify_live(4, "某人", "")
+    assert notifier.sent[0] == {
+        "idx": 3, "name": "老苗", "message": "布冬日 vs 维拉", "launch": "zhibo://play/3",
+    }
+    assert notifier.sent[1]["message"] == "正在直播"

@@ -1,6 +1,7 @@
 /* ZHIBO Web 前端逻辑
  * P1：表格 / 快照推送 / 标签筛选 / 搜索 / 排序 / 行内画质与插件下拉
  * P2：详情编辑 / 设置 / 代理 / 导入 事务对话框（表单 → 差异确认 → 保存）
+ * P3：播放(外部 mpv)/停止/复制流/右键菜单/快捷键/▶播放标记
  */
 "use strict";
 
@@ -14,6 +15,7 @@ const zhibo = {
   sortDesc: false,
   selectedIdx: -1,
   polling: false,
+  playingIdx: -1,
   // 事务对话框状态机：kind + 当前舞台数据；formData 供确认页"返回"恢复表单。
   dialog: { kind: "", data: {}, formData: null, busy: false },
 
@@ -22,6 +24,7 @@ const zhibo = {
     settings: "监控设置",
     proxy: "平台代理",
     import: "导入直播间",
+    delete: "删除直播间",
   },
 
   // ---------- 快照与渲染 ----------
@@ -53,6 +56,13 @@ const zhibo = {
           break;
         case "dialog":
           this.applyDialogData(ev.payload);
+          break;
+        case "playerState":
+          this.playingIdx = ev.payload.playing ? ev.payload.idx : -1;
+          this.renderRows();
+          break;
+        case "streamUrl":
+          this.copyText(ev.payload.url);
           break;
         case "fatal":
           this.setInfo("致命错误：" + ev.payload.message);
@@ -150,12 +160,13 @@ const zhibo = {
     for (const row of rows) {
       const tr = document.createElement("tr");
       tr.dataset.idx = row.idx;
-      if (row.idx === this.selectedIdx) tr.className = "selected";
+      const playing = row.idx === this.playingIdx;
+      tr.className = (row.idx === this.selectedIdx ? "selected" : "") + (playing ? " playing" : "");
 
       const glyph = this.statusGlyph(row);
       const errCell = row.error && row.error !== "-" ? row.error : "";
       const cells = [
-        `<td><span class="dot ${glyph.cls}">${glyph.text}</span></td>`,
+        `<td><span class="dot ${glyph.cls}">${glyph.text}</span>${playing ? '<span class="play-mark">▶</span>' : ""}</td>`,
         `<td title="${this.esc((row.tags || []).join("、"))}">${this.esc((row.tags || []).join("、") || "-")}</td>`,
         `<td title="${this.esc(row.name)}">${this.esc(row.name)}</td>`,
         `<td>${this.esc(row.platform)}</td>`,
@@ -210,6 +221,10 @@ const zhibo = {
     document.getElementById("statusPoll").textContent = this.polling
       ? "● 检测中…"
       : `○ 间隔 ${this.snapshot.poll_interval || "-"}s`;
+    const notifyBtn = document.getElementById("btnNotify");
+    if (notifyBtn) {
+      notifyBtn.textContent = this.snapshot.notifications_enabled ? "通知：开" : "通知：关";
+    }
   },
 
   setInfo(text) {
@@ -589,7 +604,10 @@ const zhibo = {
         onClick: () => this.confirmDialog(),
       });
     }
-    buttons.push({ label: "返回", onClick: () => this.backToForm() });
+    if (this.dialog.formData) {
+      // 有来源表单才有"返回"；删除等纯确认对话框直接给出关闭。
+      buttons.push({ label: "返回", onClick: () => this.backToForm() });
+    }
     buttons.push({ label: "关闭", onClick: () => this.closeDialog() });
     frag.appendChild(this.buttonRow(buttons));
     return frag;
@@ -613,6 +631,89 @@ const zhibo = {
 
   // ---------- 交互 ----------
 
+  // ---------- P3：播放与右键菜单 ----------
+
+  playRow(idx) {
+    this.selectedIdx = idx;
+    this.renderRows();
+    this.setInfo("正在获取直播流…");
+    window.pywebview.api.play(idx);
+  },
+
+  copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => this.setInfo("直播流地址已复制"),
+        () => this.copyTextFallback(text)
+      );
+    } else {
+      this.copyTextFallback(text);
+    }
+  },
+
+  copyTextFallback(text) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try {
+      if (document.execCommand("copy")) this.setInfo("直播流地址已复制");
+      else this.setInfo("复制失败：剪贴板不可用");
+    } catch (err) {
+      this.setInfo("复制失败：剪贴板不可用");
+    }
+    area.remove();
+  },
+
+  openContextMenu(idx, x, y) {
+    this.selectedIdx = idx;
+    this.renderRows();
+    const row = (this.snapshot.rows || []).find((r) => r.idx === idx);
+    const menu = document.getElementById("ctxMenu");
+    menu.innerHTML = "";
+    const items = [
+      { label: "详情与修改", action: () => window.pywebview.api.loadDetails(idx) },
+      { label: "▶ 播放", action: () => this.playRow(idx) },
+      { label: "■ 停止播放", action: () => window.pywebview.api.stopPlayer() },
+      { sep: true },
+      { label: "复制流地址", action: () => window.pywebview.api.copyStream(idx) },
+      { label: "打开直播间网页", action: () => window.pywebview.api.openWeb(idx) },
+      { sep: true },
+      {
+        label: row && row.enabled ? "停用监控" : "恢复监控",
+        action: () => window.pywebview.api.toggleEnabled(idx),
+      },
+      { label: "删除…", action: () => window.pywebview.api.previewDelete(idx), danger: true },
+    ];
+    for (const item of items) {
+      if (item.sep) {
+        menu.appendChild(this.h("div", { class: "ctx-sep" }));
+        continue;
+      }
+      menu.appendChild(this.h(
+        "button",
+        {
+          class: "ctx-item" + (item.danger ? " ctx-danger" : ""),
+          onClick: () => {
+            this.closeContextMenu();
+            item.action();
+          },
+        },
+        item.label
+      ));
+    }
+    menu.hidden = false;
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.max(2, Math.min(x, window.innerWidth - rect.width - 4)) + "px";
+    menu.style.top = Math.max(2, Math.min(y, window.innerHeight - rect.height - 4)) + "px";
+  },
+
+  closeContextMenu() {
+    document.getElementById("ctxMenu").hidden = true;
+  },
+
   wireTable() {
     document.getElementById("tableBody").addEventListener("click", (e) => {
       const sel = e.target.closest("select");
@@ -622,12 +723,19 @@ const zhibo = {
       this.selectedIdx = Number(tr.dataset.idx);
       this.renderRows();
     });
+    // 双击 = 主操作（播放），与 Qt 版一致；画质/插件列排除避免抢下拉事件。
     document.getElementById("tableBody").addEventListener("dblclick", (e) => {
       if (e.target.closest("select")) return;
       const tr = e.target.closest("tr");
       if (!tr) return;
-      this.selectedIdx = Number(tr.dataset.idx);
-      this.setInfo("播放功能将在 P3 接入（当前为外部 mpv）");
+      this.playRow(Number(tr.dataset.idx));
+    });
+    document.getElementById("tableBody").addEventListener("contextmenu", (e) => {
+      if (e.target.closest("select")) return;
+      const tr = e.target.closest("tr");
+      if (!tr) return;
+      e.preventDefault();
+      this.openContextMenu(Number(tr.dataset.idx), e.clientX, e.clientY);
     });
     document.getElementById("tableBody").addEventListener("change", (e) => {
       const sel = e.target;
@@ -676,6 +784,23 @@ const zhibo = {
       }
       window.pywebview.api.loadDetails(this.selectedIdx);
     });
+    document.getElementById("btnPlay").addEventListener("click", () => {
+      if (this.selectedIdx < 0) {
+        this.setInfo("请先在表格中选择一个直播间");
+        return;
+      }
+      this.playRow(this.selectedIdx);
+    });
+    document.getElementById("btnStop").addEventListener("click", () => {
+      window.pywebview.api.stopPlayer();
+    });
+    document.getElementById("btnNotify").addEventListener("click", () => {
+      window.pywebview.api.toggleNotifications();
+    });
+    // 点击任意处关闭右键菜单（菜单项自身的事件先于 document 处理）。
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("#ctxMenu")) this.closeContextMenu();
+    });
     document.getElementById("btnImport").addEventListener("click", () => {
       if (this.dialog.busy) return;
       this.openImportDialog();
@@ -704,7 +829,18 @@ const zhibo = {
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "F5") { e.preventDefault(); window.pywebview.api.refresh(); }
-      if (e.key === "Escape" && this.dialog.kind) { e.preventDefault(); this.closeDialog(); }
+      if (e.key === "Escape") {
+        this.closeContextMenu();
+        if (this.dialog.kind) { e.preventDefault(); this.closeDialog(); }
+      }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey) {
+        const key = (e.key || "").toLowerCase();
+        if (key === "p") { e.preventDefault(); if (this.selectedIdx >= 0) this.playRow(this.selectedIdx); return; }
+        if (key === "x") { e.preventDefault(); window.pywebview.api.stopPlayer(); return; }
+        if (key === "m") { e.preventDefault(); window.pywebview.api.playerControl("toggle_mute"); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); window.pywebview.api.playerControl("volume_up"); return; }
+        if (e.key === "ArrowDown") { e.preventDefault(); window.pywebview.api.playerControl("volume_down"); return; }
+      }
       const target = e.target;
       const typing = target && (target.tagName === "INPUT" || target.tagName === "SELECT");
       if (!typing && (e.key === "r" || e.key === "R")) window.pywebview.api.refresh();

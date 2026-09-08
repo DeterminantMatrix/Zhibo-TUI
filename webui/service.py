@@ -10,15 +10,19 @@ import asyncio
 import copy
 import datetime
 import json
+import subprocess
 import threading
+import webbrowser
 from typing import Any, Callable
 
 from zhibo.app_logging import get_logger, redact_sensitive_text
 from zhibo.config import follower_key, follower_to_edit_payload, preview_follower_edit
 from zhibo.detail import build_detail_view
+from zhibo.desktop import mpv_command, new_mpv_ipc_path, play_url
 from zhibo.import_preview import ImportPreviewService
 from zhibo.monitor import FollowerStatus, MonitorService, StatusHistoryEntry
 from zhibo.plugins import get_plugin, list_plugins
+from zhibo.plugins.base import stream_candidate_urls
 from zhibo.plugins.bounded_executor import shutdown_plugin_workers
 from zhibo.proxy_config import (
     PROXY_PLATFORMS,
@@ -33,6 +37,7 @@ from zhibo.viewmodel import (
     format_changes,
     format_import_preview,
     status_snapshot,
+    web_url_for_snapshot,
 )
 
 
@@ -50,6 +55,16 @@ class WebMonitorService:
         self._last_snapshot: dict = {}
         self._pending: dict = {}
         self._logger = get_logger("zhibo.webui")
+        # 开播通知钩子（main.py 注入 Notifier.notify_live；测试注入收集器）。
+        self.notify_hook = None
+        # 播放器状态：只在监控循环线程内访问（与 Qt 版相同的候选/代数机制）。
+        self._player_process: subprocess.Popen | None = None
+        self._player_ipc = ""
+        self._player_generation = 0
+        self._player_candidates: list[str] = []
+        self._player_candidate_index = 0
+        self._player_payload: dict = {}
+        self._playing_idx = -1
 
     # ---- 生命周期 -------------------------------------------------------
 
@@ -114,6 +129,22 @@ class WebMonitorService:
                 await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
             await service.shutdown(timeout=1.5)
             await asyncio.to_thread(shutdown_plugin_workers, True)
+            self._terminate_player_on_exit()
+
+    def _terminate_player_on_exit(self) -> None:
+        """应用退出时回收 mpv（Job Object 兜底，这里是正常路径的体面退出）。"""
+        process = self._player_process
+        self._player_process = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2.0)
+        except Exception:
+            try:
+                process.kill()
+            except OSError:
+                pass
 
     # ---- 请求投递 -------------------------------------------------------
 
@@ -197,6 +228,18 @@ class WebMonitorService:
             },
         )
         self._pusher.submit("log", {"text": f"{direction} {status.follower.name} {action}"})
+        # 开播 toast（与 Qt 版一致：下播和启动时的初始结果不通知）。
+        if (
+            status.live_info.is_live
+            and not status.is_initial_result
+            and self._service is not None
+            and self._service.cfg.notifications_enabled
+            and self.notify_hook is not None
+        ):
+            try:
+                self.notify_hook(idx, status.follower.name, status.live_info.title or "")
+            except Exception:
+                pass
         self._emit_snapshot()
 
     def _on_error(self, message: str) -> None:
@@ -716,6 +759,303 @@ class WebMonitorService:
         except Exception as exc:
             self._finish("import", False, str(exc), {})
 
+    # ---- P3：播放 / 行操作 ------------------------------------------------
+
+    def _log(self, text: str) -> None:
+        self._pusher.submit("log", {"text": text})
+
+    def _set_playing(self, idx: int) -> None:
+        self._playing_idx = idx
+        self._pusher.submit("playerState", {"playing": idx >= 0, "idx": idx})
+
+    def play(self, follower_index: int) -> None:
+        self.schedule(lambda: self._play(follower_index))
+
+    async def _play(self, follower_index: int) -> None:
+        try:
+            service = self._require_service()
+            if follower_index not in service.followers:
+                self._log("没有可用的选中项")
+                return
+            info = await service.get_stream_info(follower_index)
+            follower = service.followers[follower_index].follower
+            url = info.flv_url or info.m3u8_url or info.stream_url
+            if not url:
+                raise RuntimeError("插件没有返回可用流地址")
+            # 进入候选启动流程前先停掉当前播放，保持"单播放器"语义。
+            await self._stop_player()
+            self._player_ipc = new_mpv_ipc_path()
+            self._player_candidates = list(dict.fromkeys(
+                str(item) for item in (stream_candidate_urls(info) or [url]) if item
+            ))
+            self._player_candidate_index = 0
+            self._player_payload = {
+                "title": f"{follower.name} - Zhibo",
+                "headers": dict(info.extra.get("headers", {})),
+                "proxy": proxy_for_platform(follower.platform) or "",
+            }
+            self._set_playing(follower_index)
+            await self._start_next_candidate(self._player_generation)
+        except Exception as exc:
+            self._log(f"获取直播流失败：{redact_sensitive_text(str(exc))}")
+
+    async def _start_next_candidate(self, generation: int) -> None:
+        if generation != self._player_generation:
+            return
+        while self._player_candidate_index < len(self._player_candidates):
+            url = self._player_candidates[self._player_candidate_index]
+            self._player_candidate_index += 1
+            try:
+                process = await asyncio.to_thread(
+                    play_url,
+                    url,
+                    title=str(self._player_payload.get("title", "Zhibo")),
+                    headers=dict(self._player_payload.get("headers", {})),
+                    proxy_url=str(self._player_payload.get("proxy", "")),
+                    use_cache=True,
+                    ipc_path=self._player_ipc,
+                )
+            except Exception as exc:
+                self._log(f"CDN 候选启动失败：{redact_sensitive_text(str(exc))}")
+                continue
+            self._player_process = process
+            # 与 Qt 版一致：1 秒后验证进程存活，早退则自动切下一条候选。
+            await asyncio.sleep(1.0)
+            if generation != self._player_generation:
+                return
+            if process.poll() is None:
+                self._log("已启动 mpv 播放")
+                return
+            code = process.returncode
+            self._player_process = None
+            self._log(f"CDN 候选启动失败（退出码={code}），自动切换下一条")
+        if generation != self._player_generation or not self._player_candidates:
+            return
+        self._player_process = None
+        self._set_playing(-1)
+        self._log(f"mpv 的全部 {len(self._player_candidates)} 条 CDN 候选均启动失败")
+
+    def stop_player(self) -> None:
+        self.schedule(self._stop_player)
+
+    async def _stop_player(self) -> None:
+        self._player_generation += 1
+        self._player_candidates = []
+        self._player_candidate_index = 0
+        self._player_ipc = ""
+        self._set_playing(-1)
+        process = self._player_process
+        self._player_process = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+        except OSError:
+            return
+        # 等待退出并逐级升级到 kill，避免留下句柄或孤儿 mpv 进程。
+        try:
+            await asyncio.to_thread(process.wait, 2.0)
+            self._log("已停止当前 mpv")
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            process.kill()
+            await asyncio.to_thread(process.wait, 1.0)
+            self._log("已强制结束当前 mpv")
+        except (OSError, subprocess.TimeoutExpired):
+            self._log("mpv 进程未能立即退出，可能仍占用播放文件")
+
+    def player_control(self, action: str) -> None:
+        self.schedule(lambda: self._player_control(str(action or "")))
+
+    async def _player_control(self, action: str) -> None:
+        commands = {
+            "toggle_pause": ("cycle", "pause"),
+            "volume_up": ("add", "volume", "5"),
+            "volume_down": ("add", "volume", "-5"),
+            "toggle_mute": ("cycle", "mute"),
+        }
+        command = commands.get(action)
+        if command is None:
+            self._log(f"未知的播放器操作：{action}")
+            return
+        process = self._player_process
+        if process is None or process.poll() is not None:
+            self._log("mpv 当前没有正在播放")
+            return
+        if not mpv_command(self._player_ipc, *command):
+            self._log("无法连接 mpv 控制通道")
+
+    def copy_stream(self, follower_index: int) -> None:
+        self.schedule(lambda: self._copy_stream(follower_index))
+
+    async def _copy_stream(self, follower_index: int) -> None:
+        try:
+            service = self._require_service()
+            if follower_index not in service.followers:
+                self._log("没有可用的选中项")
+                return
+            info = await service.get_stream_info(follower_index)
+            url = info.flv_url or info.m3u8_url or info.stream_url
+            if not url:
+                raise RuntimeError("插件没有返回可用流地址")
+            self._pusher.submit("streamUrl", {"idx": follower_index, "url": url})
+            self._log("直播流地址已获取，正在复制到剪贴板")
+        except Exception as exc:
+            self._log(f"获取直播流失败：{redact_sensitive_text(str(exc))}")
+
+    def open_web(self, follower_index: int) -> None:
+        self.schedule(lambda: self._open_web(follower_index))
+
+    async def _open_web(self, follower_index: int) -> None:
+        try:
+            service = self._require_service()
+            status = service.followers.get(follower_index)
+            if status is None:
+                self._log("没有可用的选中项")
+                return
+            row = status_snapshot(follower_index, status)
+            url = web_url_for_snapshot(row)
+            if not url.startswith(("http://", "https://")):
+                self._log("该关注项没有可直接打开的网页地址")
+                return
+            await asyncio.to_thread(webbrowser.open, url)
+            self._log(f"已在浏览器打开 {status.follower.name} 的直播间页面")
+        except Exception as exc:
+            self._log(f"打开网页失败：{redact_sensitive_text(str(exc))}")
+
+    def toggle_enabled(self, follower_index: int) -> None:
+        self.schedule(lambda: self._toggle_enabled(follower_index))
+
+    async def _toggle_enabled(self, follower_index: int) -> None:
+        try:
+            service = self._require_service()
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的直播间已不存在")
+            if service.is_polling or status.is_checking:
+                raise ValueError("状态检测进行中，请在本轮结束后切换")
+            current = status.follower
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_follower,
+                follower_index,
+                {"enabled": not current.enabled},
+                expected_key=follower_key(current),
+                expected_follower=copy.deepcopy(current),
+            )
+            updated = persisted.follower
+            service.cfg.followers[follower_index] = updated
+            if updated.enabled:
+                status.follower = updated
+            else:
+                replacement = FollowerStatus(follower=updated, check_state="disabled")
+                replacement.history.append(
+                    StatusHistoryEntry(
+                        at=datetime.datetime.now(),
+                        state="disabled",
+                        message="右键快速停用",
+                        is_live=False,
+                    )
+                )
+                service.followers[follower_index] = replacement
+            self._emit_snapshot()
+            state = "已恢复监控" if updated.enabled else "已停止监控（配置保留）"
+            self._finish("toggle_enabled", True, f"{updated.name} {state}", {})
+        except Exception as exc:
+            if self._service is not None:
+                self._emit_snapshot()
+            self._finish("toggle_enabled", False, str(exc), {})
+
+    def toggle_notifications(self) -> None:
+        self.schedule(self._toggle_notifications)
+
+    async def _toggle_notifications(self) -> None:
+        try:
+            service = self._require_service()
+            candidate = copy.deepcopy(service.cfg)
+            candidate.notifications_enabled = not service.cfg.notifications_enabled
+            # save_config 会等待跨进程文件锁（最长 10 秒），不能阻塞事件循环。
+            await asyncio.to_thread(service.config_manager.save_config, candidate)
+            service.cfg.notifications_enabled = candidate.notifications_enabled
+            state = "开启" if candidate.notifications_enabled else "关闭"
+            self._log(f"桌面通知已{state}")
+            self._emit_snapshot()
+        except Exception as exc:
+            self._log(f"切换桌面通知失败：{redact_sensitive_text(str(exc))}")
+
+    @staticmethod
+    def _ensure_delete_is_idle(service: MonitorService) -> None:
+        if service.is_polling or any(status.is_checking for status in service.followers.values()):
+            raise ValueError("状态检测进行中，请等待本轮完成后再删除")
+        if any(not task.done() for task in service._stream_deadline_tasks.values()):
+            raise ValueError("正在获取直播流，请稍后再删除")
+
+    def preview_delete(self, follower_index: int) -> None:
+        self.schedule(lambda: self._preview_delete(follower_index))
+
+    async def _preview_delete(self, follower_index: int) -> None:
+        try:
+            service = self._require_service()
+            self._ensure_delete_is_idle(service)
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的直播间已不存在")
+            if len(service.cfg.followers) <= 1:
+                raise ValueError("至少需要保留一个直播间，无法删除最后一项")
+            follower = status.follower
+            self._pending["delete"] = {
+                "index": follower_index,
+                "expected_key": follower_key(follower),
+                "expected_follower": copy.deepcopy(follower),
+            }
+            tags = "、".join(follower.tags) or "无标签"
+            self._show_dialog(
+                "delete",
+                {
+                    "stage": "confirm",
+                    "previewText": (
+                        "即将永久删除这个直播间：\n\n"
+                        f"名称：{follower.name}\n"
+                        f"平台：{follower.platform}\n"
+                        f"标签：{tags}\n\n"
+                        "删除后会立即写入关注列表，此操作不能在程序内撤销。"
+                    ),
+                    "confirmLabel": "确认删除",
+                },
+            )
+        except Exception as exc:
+            self._finish("delete", False, str(exc), {})
+
+    async def _confirm_delete(self) -> None:
+        try:
+            service = self._require_service()
+            pending = self._pending.pop("delete", None)
+            if not pending:
+                raise ValueError("删除确认已失效，请重新选择直播间")
+            self._ensure_delete_is_idle(service)
+            index = pending["index"]
+            removed = await asyncio.to_thread(
+                service.config_manager.remove_follower,
+                index,
+                expected_key=pending["expected_key"],
+                expected_follower=pending["expected_follower"],
+            )
+            service.cfg.followers.pop(index)
+            service.followers = {
+                old_index if old_index < index else old_index - 1: status
+                for old_index, status in service.followers.items()
+                if old_index != index
+            }
+            self._pending.pop("edit", None)
+            if self._playing_idx == index:
+                # 正在播放的行被删除：先停播放器，避免指向失效下标。
+                await self._stop_player()
+            self._emit_snapshot()
+            self._finish("delete", True, f"已删除直播间：{removed.name}", {"close": True})
+        except Exception as exc:
+            self._finish("delete", False, str(exc), {})
+
     # ---- P2：确认分发 ----------------------------------------------------
 
     def confirm_dialog(self, kind: str) -> None:
@@ -723,6 +1063,7 @@ class WebMonitorService:
             "edit": self._confirm_edit,
             "settings": self._confirm_settings,
             "import": self._confirm_import,
+            "delete": self._confirm_delete,
         }
         confirmer = confirmers.get(str(kind or ""))
         if confirmer is None:

@@ -2,6 +2,7 @@
 
 P0/P1：窗口控制 + 快照/刷新/画质/插件。
 P2：详情编辑/设置/代理/导入 四个事务对话框。
+P3：播放(外部 mpv)/停止/复制流/打开网页/停用恢复/删除/通知开关/播放器控制。
 """
 from __future__ import annotations
 
@@ -118,3 +119,33 @@ class ZhiboApi:
     def previewImport(self, url: str, tag: str) -> None:
         if self._service is not None:
             self._service.preview_import(str(url or ""), str(tag or ""))
+
+    # ---- P3：播放与行操作 --------------------------------------------------
+
+    def play(self, follower_index: int) -> None:
+        if self._service is not None:
+            self._service.play(int(follower_index))
+
+    def stopPlayer(self) -> None:
+        if self._service is not None:
+            self._service.stop_player()
+
+    def copyStream(self, follower_index: int) -> None:
+        if self._service is not None:
+            self._service.copy_stream(int(follower_index))
+
+    def openWeb(self, follower_index: int) -> None:
+        if self._service is not None:
+            self._service.open_web(int(follower_index))
+
+    def toggleEnabled(self, follower_index: int) -> None:
+        if self._service is not None:
+            self._service.toggle_enabled(int(follower_index))
+
+    def playerControl(self, action: str) -> None:
+        if self._service is not None:
+            self._service.player_control(str(action))
+
+    def toggleNotifications(self) -> None:
+        if self._service is not None:
+            self._service.toggle_notifications()

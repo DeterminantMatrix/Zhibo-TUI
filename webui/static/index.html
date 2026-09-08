@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>直播监控工具</title>
-<link rel="stylesheet" href="98.css?v=5">
-<link rel="stylesheet" href="app.css?v=5">
+<link rel="stylesheet" href="98.css?v=6">
+<link rel="stylesheet" href="app.css?v=6">
 </head>
 <body>
   <div class="window app-window">
@@ -27,6 +27,8 @@
 
     <div class="toolbar">
       <button id="btnRefresh">↻ 刷新 F5</button>
+      <button id="btnPlay">▶ 播放</button>
+      <button id="btnStop">■ 停止</button>
       <span class="toolbar-sep"></span>
       <button id="btnDetails">详情 / 编辑</button>
       <input type="text" id="searchBox" class="search-box" placeholder="搜索主播、平台、标题…">
@@ -39,6 +41,7 @@
         </select>
       </label>
       <span class="toolbar-sep"></span>
+      <button id="btnNotify">通知：开</button>
       <button id="btnTheme">暗色模式</button>
     </div>
 
@@ -73,9 +76,11 @@
       </div>
       <div class="status-bar-field" id="statusSummary">在线 0 / 总计 0</div>
       <div class="status-bar-field" id="statusPoll">等待监控核心…</div>
-      <div class="status-bar-field status-bar-grow" id="statusInfo">P2</div>
+      <div class="status-bar-field status-bar-grow" id="statusInfo">P3</div>
     </div>
   </div>
+
+  <div class="context-menu" id="ctxMenu" hidden></div>
 
   <div class="dialog-overlay" id="dialogOverlay" hidden>
     <div class="window dialog-window">
@@ -89,6 +94,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
