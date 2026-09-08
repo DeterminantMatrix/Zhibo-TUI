@@ -275,6 +275,29 @@ body.theme-dark .ctx-danger { color: #ff9090; }
 }
 .empty-hint.show { display: block; }
 
+/* ---------- P5 运行日志面板 ---------- */
+.log-panel {
+  flex: 0 0 auto;
+  height: 150px;
+  margin: 0 6px 5px;
+  background: var(--field-bg);
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  overflow: hidden;
+}
+.log-panel[hidden] { display: none; }
+.log-lines {
+  height: 100%;
+  overflow: auto;
+  padding: 3px 6px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--field-text);
+}
+.log-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-time { color: var(--hint-text); margin-right: 8px; }
+
 /* 状态栏铺满并分格 */
 .status-bar {
   flex: 0 0 auto;

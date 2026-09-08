@@ -16,6 +16,9 @@ const zhibo = {
   selectedIdx: -1,
   polling: false,
   playingIdx: -1,
+  // 运行日志环形缓冲（P5）：最多保留 500 条，面板隐藏时也继续累积。
+  logLines: [],
+  logVisible: false,
   // 事务对话框状态机：kind + 当前舞台数据；formData 供确认页"返回"恢复表单。
   dialog: { kind: "", data: {}, formData: null, busy: false },
 
@@ -45,6 +48,7 @@ const zhibo = {
           this.renderStatus();
           break;
         case "log":
+          this.appendLogLine(ev.payload.text);
           this.setInfo(ev.payload.text);
           break;
         case "liveEvent":
@@ -242,6 +246,61 @@ const zhibo = {
 
   setInfo(text) {
     document.getElementById("statusInfo").textContent = text;
+  },
+
+  // ---------- P5：运行日志面板 ----------
+
+  LOG_LIMIT: 500,
+
+  appendLogLine(text) {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    this.logLines.push({
+      time: pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds()),
+      text: String(text == null ? "" : text),
+    });
+    if (this.logLines.length > this.LOG_LIMIT) {
+      this.logLines.splice(0, this.logLines.length - this.LOG_LIMIT);
+    }
+    if (this.logVisible) this.appendLogNode(this.logLines[this.logLines.length - 1]);
+  },
+
+  appendLogNode(line) {
+    const box = document.getElementById("logLines");
+    if (!box) return;
+    const nearBottom =
+      box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+    const row = document.createElement("div");
+    row.className = "log-line";
+    const time = document.createElement("span");
+    time.className = "log-time";
+    time.textContent = line.time;
+    row.appendChild(time);
+    row.appendChild(document.createTextNode(line.text));
+    box.appendChild(row);
+    while (box.childElementCount > this.LOG_LIMIT) box.removeChild(box.firstChild);
+    if (nearBottom) box.scrollTop = box.scrollHeight;
+  },
+
+  renderAllLogLines() {
+    const box = document.getElementById("logLines");
+    box.innerHTML = "";
+    for (const line of this.logLines) this.appendLogNode(line);
+  },
+
+  toggleLog() {
+    this.logVisible = !this.logVisible;
+    document.getElementById("logPanel").hidden = !this.logVisible;
+    if (this.logVisible) this.renderAllLogLines();
+    try { localStorage.setItem("zhibo.logVisible", this.logVisible ? "1" : "0"); } catch (err) { /* 忽略 */ }
+  },
+
+  restoreLogVisibility() {
+    let visible = false;
+    try { visible = localStorage.getItem("zhibo.logVisible") === "1"; } catch (err) { /* 忽略 */ }
+    this.logVisible = visible;
+    document.getElementById("logPanel").hidden = !visible;
+    if (visible) this.renderAllLogLines();
   },
 
   esc(value) {
@@ -1130,6 +1189,7 @@ const zhibo = {
     document.getElementById("btnNotify").addEventListener("click", () => {
       window.pywebview.api.toggleNotifications();
     });
+    document.getElementById("btnLog").addEventListener("click", () => this.toggleLog());
     // 点击任意处关闭右键菜单（菜单项自身的事件先于 document 处理）。
     document.addEventListener("click", (e) => {
       if (!e.target.closest("#ctxMenu")) this.closeContextMenu();
@@ -1270,6 +1330,7 @@ const zhibo = {
     this.wireControls();
     this.wireTable();
     this.restoreTheme();
+    this.restoreLogVisibility();
     this.restore();
     this.renderSortMarks();
     this.setInfo("等待监控核心…");

@@ -1,6 +1,7 @@
 """Web 前端入口 — pywebview 窗口 + pystray 托盘 + 单实例锁。"""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -12,6 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import webview
 
+from zhibo.plugins import discover_plugins
+from zhibo.private_data import ensure_private_parent, user_data_dir
 from zhibo.single_instance import COMMAND_SHOW, SingleInstance, notify_existing_instance
 from webui.api import ZhiboApi
 from webui.events import EventPusher
@@ -22,6 +25,16 @@ from webui.tray import TrayController
 
 
 INSTANCE_KEY = f"{str(PROJECT_ROOT).casefold()}::webui"
+GEOMETRY_FILE = user_data_dir() / "webui_window.json"
+
+
+def load_window_geometry() -> dict:
+    """读取上次窗口位置/尺寸；损坏或缺失时返回空 dict（用默认值）。"""
+    try:
+        data = json.loads(GEOMETRY_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _extract_notify_play(argv: list[str]) -> int:
@@ -58,12 +71,24 @@ def main(argv: list[str] | None = None) -> int:
     pusher = EventPusher()
     service = WebMonitorService(pusher)
     api = ZhiboApi()
+    # 加载全部内置插件（streamlink/streamget/yt-dlp 等）；漏掉会让
+    # 使用这些插件的关注项全部"未知插件"，下载也不可用。
+    plugin_failures = discover_plugins() or {}
+    for module_name, error in plugin_failures.items():
+        service._log(f"插件加载失败 {module_name}: {error}")
+
+    # 窗口几何记忆：启动恢复，moved/resized 防抖落盘。
+    geometry = load_window_geometry()
+    geometry_x = geometry.get("x")
+    geometry_y = geometry.get("y")
     window = webview.create_window(
         "直播监控工具",
         url=str(Path(__file__).with_name("static") / "index.html"),
         js_api=api,
-        width=1280,
-        height=840,
+        x=geometry_x if isinstance(geometry_x, int) else None,
+        y=geometry_y if isinstance(geometry_y, int) else None,
+        width=geometry.get("width") if isinstance(geometry.get("width"), int) else 1280,
+        height=geometry.get("height") if isinstance(geometry.get("height"), int) else 840,
         min_size=(960, 600),
         frameless=True,
         # 无边框窗口创建瞬间的底色：Win98 桌面青。
@@ -99,6 +124,34 @@ def main(argv: list[str] | None = None) -> int:
         return True
 
     window.events.closing += on_closing
+
+    # 移动/缩放停止 0.8 秒后落盘，避免拖动期间高频写文件。
+    geometry_timer: dict = {}
+
+    def save_window_geometry() -> None:
+        try:
+            data = {
+                "x": int(window.x),
+                "y": int(window.y),
+                "width": int(window.width),
+                "height": int(window.height),
+            }
+            ensure_private_parent(GEOMETRY_FILE)
+            GEOMETRY_FILE.write_text(json.dumps(data), encoding="utf-8")
+        except Exception:
+            pass  # 几何记忆是锦上添花，任何失败都静默。
+
+    def schedule_geometry_save(*_args) -> None:
+        previous = geometry_timer.get("t")
+        if previous is not None:
+            previous.cancel()
+        timer = threading.Timer(0.8, save_window_geometry)
+        timer.daemon = True
+        geometry_timer["t"] = timer
+        timer.start()
+
+    window.events.resized += schedule_geometry_save
+    window.events.moved += schedule_geometry_save
 
     def handle_command(command: str) -> None:
         if command == COMMAND_SHOW:

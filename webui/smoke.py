@@ -97,6 +97,15 @@ PROBE_JS = r"""
     if (close) close.click();
     await sleep(300);
     out.downloadClosed = document.getElementById('dialogOverlay').hidden;
+
+    // 日志面板：开关切换，且已有日志行累积。
+    document.getElementById('btnLog').click();
+    await sleep(300);
+    out.logOpened = !document.getElementById('logPanel').hidden;
+    out.logCount = document.querySelectorAll('#logLines .log-line').length;
+    document.getElementById('btnLog').click();
+    await sleep(250);
+    out.logClosed = document.getElementById('logPanel').hidden;
   } catch (err) {
     out.error = String((err && err.message) || err);
   }
@@ -166,5 +175,8 @@ def verdict(checks: dict[str, Any]) -> tuple[bool, str]:
         and bool(checks.get("updateStaysClosed"))
         and bool(checks.get("downloadOpened"))
         and bool(checks.get("downloadClosed"))
+        and bool(checks.get("logOpened"))
+        and int(checks.get("logCount") or 0) > 0
+        and bool(checks.get("logClosed"))
     )
     return ok, json.dumps(checks, ensure_ascii=False)

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>直播监控工具</title>
-<link rel="stylesheet" href="98.css?v=7">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="98.css?v=8">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
   <div class="window app-window">
@@ -41,6 +41,7 @@
         </select>
       </label>
       <span class="toolbar-sep"></span>
+      <button id="btnLog">日志</button>
       <button id="btnNotify">通知：开</button>
       <button id="btnTheme">暗色模式</button>
     </div>
@@ -68,6 +69,10 @@
       <div class="empty-hint" id="emptyHint">没有匹配的关注项</div>
     </div>
 
+    <div class="log-panel" id="logPanel" hidden>
+      <div class="log-lines" id="logLines"></div>
+    </div>
+
     <div class="status-bar">
       <div class="status-bar-field dialog-launchers">
         <button id="btnImport">导入</button>
@@ -78,7 +83,7 @@
       </div>
       <div class="status-bar-field" id="statusSummary">在线 0 / 总计 0</div>
       <div class="status-bar-field" id="statusPoll">等待监控核心…</div>
-      <div class="status-bar-field status-bar-grow" id="statusInfo">P3</div>
+      <div class="status-bar-field status-bar-grow" id="statusInfo">P5</div>
     </div>
   </div>
 
@@ -96,6 +101,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
