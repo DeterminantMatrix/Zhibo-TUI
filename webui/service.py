@@ -1,8 +1,8 @@
 """Web 前端的监控服务线程 — 复用 zhibo.monitor，推送快照到 JS。
 
-结构与 qt_quick/worker.py 同源：后台 asyncio 线程跑 MonitorService，
-请求经 schedule() 投递；区别是结果通过 EventPusher 推给网页，
-并维护一份线程安全的最新快照供 getSnapshot() 同步读取。
+后台 asyncio 线程跑 MonitorService，请求经 schedule() 投递；
+结果通过 EventPusher 推给网页，并维护一份线程安全的最新快照
+供 getSnapshot() 同步读取。
 """
 from __future__ import annotations
 

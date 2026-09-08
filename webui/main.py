@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         service._log("zhibo:// 协议注册失败：通知点击将无法唤起播放")
 
     tray = TrayController(
-        icon_path=PROJECT_ROOT / "qt_quick" / "assets" / "tray.ico",
+        icon_path=PROJECT_ROOT / "webui" / "assets" / "tray.ico",
         tooltip="直播监控工具 · Web",
         on_show=window.show,
         on_hide=window.hide,

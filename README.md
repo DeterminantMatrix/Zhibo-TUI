@@ -1,14 +1,15 @@
 # Zhibo 直播监控
 
-一个基于 Python 与 Qt Quick/QML 的多平台直播监控工具。它按标签展示关注列表，定时检测开播状态，并支持一键用播放器打开直播流。
+一个基于 Python 与 pywebview（Windows 98 复古风格界面）的多平台直播监控工具。它按标签展示关注列表，定时检测开播状态，并支持一键用播放器打开直播流。
 
 ## 功能
 
 - 监控斗鱼、虎牙、抖音、B 站、Twitch、YouTube、小红书与 FS1 等直播源
 - 标签页、搜索和在线 / 离线 / 异常状态筛选
 - 多插件回退：streamlink、streamget、yt-dlp 与 FS1 专用插件
-- 开播通知、系统托盘、最小化隐藏、mpv 播放
+- 开播 toast 通知（点击直接播放）、系统托盘、最小化隐藏、外部 mpv 播放
 - 从直播间 URL 导入关注项，以及 YouTube 格式选择下载
+- 更新中心：自动检查并更新 mpv/ffmpeg/uosc/解析组件，管理 B站 Cookie 与 FS1 配置
 
 ## 安装与启动
 
@@ -18,22 +19,19 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -m pip install -r qt_quick\requirements-qt.txt
 ```
 
-双击 `qt_quick\start_native.vbs` 启动（通过 `pythonw.exe` 运行，不依赖 Windows Terminal），也可以运行：
+双击 `webui\start_web.vbs` 启动（通过 `pythonw.exe` 运行），也可以运行：
 
 ```powershell
-.venv\Scripts\python.exe -m qt_quick
+.venv\Scripts\python.exe -m webui
 ```
-
-界面细节与快捷键见 [`qt_quick/README.md`](<D:/WPS SyncDisk/2.Tool/1.VibeCoding/ZHIBO/qt_quick/README.md>)。
 
 ## 目录结构
 
 ```text
 ZHIBO/
-├── qt_quick/            # Qt Quick/QML 前端（唯一入口，双击 start_native.vbs）
+├── webui/               # pywebview 前端（唯一入口，双击 start_web.vbs）
 ├── zhibo/               # 后端核心包
 │   ├── monitor.py       #   轮询调度、状态机、平台熔断退避
 │   ├── config.py        #   followers.csv / settings.csv 持久化与校验
@@ -137,22 +135,6 @@ $env:ZHIBO_LOG_FILE = "D:\PrivateData\Zhibo\logs\zhibo.log"
 脚本与更新模块的交接字段包括当前站点 origin、`/v1/room` API、`authorization`、`api-version`、`imei`、`dun-imei`、User-Agent 和当前页面可读的 Cookie。更新模块仍兼容旧版 curl，并会校验 HTTPS、固定 API 主机和受限的 `fs` / `fszb` 数字域名；因此 `fs148.com`、`fszb148.com`、`fszb130.com`、`fszb321.com` 等站点可以轮换使用，站点域名不会被写死为 148。房间的 `room_id` / `sport_id` 仍由关注列表配置负责，不会因为导出授权而自动新增关注项。
 
 浏览器脚本不能读取 HttpOnly Cookie，也不能可靠地读取浏览器自动附加但未由页面显式设置的 `Cookie` 请求头；这不会影响当前 FS1 主要使用的 `authorization` 请求头捕获。授权数据只通过剪贴板交给本机更新窗口，不开放常驻 localhost 接收端。不要把导出的 JSON 发给他人；如果已经泄露授权令牌，应先在 FS1 端注销或重新登录。
-
-## 打包成 exe（PyInstaller）
-
-单文件夹模式（多进程隔离子进程共享同一份文件，启动快、误报少）：
-
-```powershell
-python -m pip install -r requirements-dev.txt   # 含 pyinstaller
-.\.venv\Scripts\python.exe -m PyInstaller Zhibo.spec --noconfirm
-```
-
-产物在 `dist\Zhibo\Zhibo.exe`（约 460MB，含 PySide6 与全部插件）。使用要点：
-
-- `followers.csv` / `settings.csv` 放在 **exe 同目录**；首次运行会自动生成可编辑的模板
-- Cookie、FS1 配置、日志仍在用户私有目录 `%LOCALAPPDATA%\Zhibo`，与源码版共用
-- 打包版内不能程序内更新 Python 组件（更新中心会提示改用新版程序覆盖）；mpv/ffmpeg/uosc 便携工具安装不受影响
-- 双击 `Zhibo.exe` 即启动；`Zhibo.exe --smoke-test` 可做无人值守自检
 
 ## 测试
 
