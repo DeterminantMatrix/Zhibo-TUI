@@ -1,0 +1,81 @@
+/* ZHIBO 98 风格补充样式（在 98.css 之上） */
+
+/* 98.css 的像素字体没有中文字形；宋体是 Win98 时代的中文系统字体，
+   作为回退在视觉上保持同一时代。 */
+body, button, input, select, textarea {
+  font-family: "Pixelated MS Sans Serif", "SimSun", "MS Song", sans-serif !important;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #008080; /* 无边框窗口创建瞬间的 Win98 桌面青 */
+  overflow: hidden;
+}
+
+.app-window {
+  width: 100vw;
+  height: 100vh;
+  box-shadow: none;      /* 窗口即整个客户区，不需要投影 */
+  display: flex;
+  flex-direction: column;
+}
+
+.app-window .title-bar {
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.window-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: #c0c0c0;
+  padding: 4px;
+}
+
+/* 经典菜单栏 */
+.menu-bar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 1px 2px;
+  background: #c0c0c0;
+  border-bottom: 1px solid #dfdfdf;
+  box-shadow: inset 0 -1px 0 #808080;
+}
+.menu-item {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 2px 8px;
+  min-width: 0;
+  height: auto;
+  font-size: 11px;
+}
+.menu-item:hover, .menu-item.open {
+  border-color: #dfdfdf #808080 #808080 #dfdfdf;
+  background: #c0c0c0;
+}
+
+/* 状态栏铺满并分格 */
+.status-bar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+}
+.status-bar-grow {
+  flex: 1 1 auto;
+}
+
+/* P0 占位 */
+.placeholder {
+  margin: 32px auto;
+  max-width: 520px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.placeholder-title {
+  font-weight: bold;
+  margin-bottom: 8px;
+}

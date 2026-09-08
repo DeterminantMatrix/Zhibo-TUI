@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>直播监控工具</title>
+<link rel="stylesheet" href="98.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="window app-window">
+    <div class="title-bar" style="--pywebview-drag: drag;">
+      <div class="title-bar-text" id="winTitle">直播监控工具 - [全部]</div>
+      <div class="title-bar-controls">
+        <button aria-label="Minimize" id="btnMin"></button>
+        <button aria-label="Maximize" id="btnMax"></button>
+        <button aria-label="Close" id="btnClose"></button>
+      </div>
+    </div>
+
+    <div class="menu-bar" role="menubar">
+      <button class="menu-item" data-menu="file">文件(F)</button>
+      <button class="menu-item" data-menu="view">查看(V)</button>
+      <button class="menu-item" data-menu="action">操作(O)</button>
+      <button class="menu-item" data-menu="tools">工具(T)</button>
+      <button class="menu-item" data-menu="help">帮助(H)</button>
+    </div>
+
+    <div class="window-body" id="appBody">
+      <div class="placeholder">
+        <div class="placeholder-title">98 复古界面 · 基建就绪（P0）</div>
+        <div>窗口 / 托盘 / 单实例已接通；表格与监控将在 P1 接入。</div>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-bar-field" id="statusBackend">后端：连接中…</div>
+      <div class="status-bar-field" id="statusInstance">单实例：OK</div>
+      <div class="status-bar-field status-bar-grow" id="statusInfo">P0</div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
