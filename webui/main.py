@@ -16,6 +16,7 @@ from zhibo.single_instance import COMMAND_SHOW, SingleInstance, notify_existing_
 from webui.api import ZhiboApi
 from webui.events import EventPusher
 from webui.service import WebMonitorService
+from webui.smoke import run_dialog_probe, verdict
 from webui.tray import TrayController
 
 
@@ -74,11 +75,23 @@ def main(argv: list[str] | None = None) -> int:
         lambda command: window.show() if command == COMMAND_SHOW else None
     )
 
+    probe_result: dict = {}
+
     if smoke:
-        # 无人值守自检：加载后由前端定时调用退出，外部再兜底强杀。
-        timer = threading.Timer(8.0, api.quit_from_tray)
-        timer.daemon = True
-        timer.start()
+        # 无人值守自检：页面就绪后注入对话框交互探针（真实按钮点击全链路），
+        # 拿到结果即退出；兜底定时器防止探针挂死拖住进程。
+        safety = threading.Timer(40.0, api.quit_from_tray)
+        safety.daemon = True
+        safety.start()
+
+        def start_probe() -> None:
+            def collect() -> None:
+                probe_result.update(run_dialog_probe(window))
+                api.quit_from_tray()
+
+            threading.Thread(target=collect, name="zhibo-webui-smoke", daemon=True).start()
+
+        window.events.loaded += start_probe
 
     def start_after_gui() -> None:
         # evaluate_js 只能在 GUI 启动后调用；推送与监控线程随 GUI 起动。
@@ -97,4 +110,9 @@ def main(argv: list[str] | None = None) -> int:
     service.stop()
     tray.stop()
     instance.close()
+
+    if smoke:
+        ok, summary = verdict(probe_result)
+        print(f"SMOKE_DIALOGS {'PASS' if ok else 'FAIL'}: {summary}")
+        return 0 if ok else 1
     return 0

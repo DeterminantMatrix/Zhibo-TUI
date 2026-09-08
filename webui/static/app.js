@@ -228,7 +228,7 @@ const zhibo = {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(attrs)) {
       if (key === "class") node.className = value;
-      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+      else if (key.startsWith("on")) node.addEventListener(key.slice(2).toLowerCase(), value);
       else if (value !== undefined && value !== null) node.setAttribute(key, value);
     }
     if (text !== undefined && text !== null) node.textContent = text;
