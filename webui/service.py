@@ -9,15 +9,31 @@ from __future__ import annotations
 import asyncio
 import copy
 import datetime
+import json
 import threading
 from typing import Any, Callable
 
 from zhibo.app_logging import get_logger, redact_sensitive_text
-from zhibo.config import follower_key
-from zhibo.monitor import MonitorService
+from zhibo.config import follower_key, follower_to_edit_payload, preview_follower_edit
+from zhibo.detail import build_detail_view
+from zhibo.import_preview import ImportPreviewService
+from zhibo.monitor import FollowerStatus, MonitorService, StatusHistoryEntry
 from zhibo.plugins import get_plugin, list_plugins
+from zhibo.plugins.bounded_executor import shutdown_plugin_workers
+from zhibo.proxy_config import (
+    PROXY_PLATFORMS,
+    normalize_proxy_value,
+    proxy_for_platform,
+    set_platform_proxies,
+)
 from zhibo.quality_options import normalize_quality_choice, quality_for_plugin, quality_options
-from zhibo.viewmodel import status_snapshot
+from zhibo.viewmodel import (
+    EDIT_LABELS,
+    SETTINGS_LABELS,
+    format_changes,
+    format_import_preview,
+    status_snapshot,
+)
 
 
 class WebMonitorService:
@@ -32,6 +48,7 @@ class WebMonitorService:
         self._ready = threading.Event()
         self._snapshot_lock = threading.Lock()
         self._last_snapshot: dict = {}
+        self._pending: dict = {}
         self._logger = get_logger("zhibo.webui")
 
     # ---- 生命周期 -------------------------------------------------------
@@ -309,3 +326,406 @@ class WebMonitorService:
             "operationFinished",
             {"kind": kind, "ok": bool(success), "message": message, "payload": payload},
         )
+
+    def _show_dialog(self, kind: str, payload: dict) -> None:
+        self._pusher.submit("dialog", {"kind": kind, "payload": payload})
+
+    # ---- P2：详情与编辑 --------------------------------------------------
+
+    def load_details(self, follower_index: int) -> None:
+        self.schedule(lambda: self._load_details(follower_index))
+
+    async def _load_details(self, follower_index: int) -> None:
+        try:
+            service = self._require_service()
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的关注项已不存在")
+            detail = build_detail_view(
+                status, service.get_platform_health(status.follower.platform)
+            )
+            # 详情与编辑合一：同一份推送同时携带状态详情行和编辑表单初值。
+            form = follower_to_edit_payload(status.follower, redact=True)
+            plugin = str(form.get("plugin", ""))
+            platform = str(form.get("platform", ""))
+            self._show_dialog(
+                "edit",
+                {
+                    "idx": follower_index,
+                    "detailTitle": detail.title,
+                    "detailRows": [
+                        {"label": row.label, "value": row.value, "tone": row.tone}
+                        for row in detail.rows
+                    ],
+                    "streamAvailable": detail.stream_available,
+                    "form": {
+                        "enabled": "true" if form.get("enabled", True) else "false",
+                        "name": form.get("name", ""),
+                        "tags": "|".join(form.get("tags", [])),
+                        "plugin": plugin,
+                        "fallback_plugins": "|".join(form.get("fallback_plugins", [])),
+                        "platform": platform,
+                        "url": form.get("url", ""),
+                        "quality": form.get("quality", "best"),
+                        "sport_id": form.get("sport_id", ""),
+                        "extra": json.dumps(
+                            form.get("extra", {}), ensure_ascii=False, sort_keys=True, indent=2
+                        ),
+                    },
+                    "pluginOptions": list_plugins(),
+                    "qualityOptions": [
+                        {"label": label, "value": value}
+                        for label, value in quality_options(
+                            plugin, platform, str(form.get("quality", "best"))
+                        )
+                    ],
+                },
+            )
+        except Exception as exc:
+            self._finish("edit", False, str(exc), {})
+
+    def preview_edit(self, follower_index: int, values: dict) -> None:
+        self.schedule(lambda: self._preview_edit(follower_index, dict(values or {})))
+
+    async def _preview_edit(self, follower_index: int, values: dict) -> None:
+        try:
+            service = self._require_service()
+            status = service.followers.get(follower_index)
+            if status is None or status.is_checking:
+                raise ValueError("编辑目标已变化或正在检测，请重新打开编辑器")
+            candidate_values = dict(values)
+            old_plugin = status.follower.plugin
+            new_plugin = str(candidate_values.get("plugin", old_plugin) or old_plugin).strip()
+            new_platform = str(
+                candidate_values.get("platform", status.follower.platform) or status.follower.platform
+            ).strip()
+            requested_quality = str(
+                candidate_values.get("quality", status.follower.quality) or "best"
+            ).strip()
+            if new_plugin.casefold() != old_plugin.casefold():
+                if requested_quality.casefold() == (status.follower.quality or "best").casefold():
+                    candidate_values["quality"] = quality_for_plugin(
+                        status.follower.quality,
+                        source_plugin=old_plugin,
+                        target_plugin=new_plugin,
+                        platform=new_platform,
+                    )
+                else:
+                    candidate_values["quality"] = normalize_quality_choice(
+                        new_plugin, new_platform, requested_quality
+                    )
+            preview = preview_follower_edit(
+                status.follower,
+                candidate_values,
+                existing_followers=service.cfg.followers,
+                editing_index=follower_index,
+            )
+            if not preview.has_changes:
+                raise ValueError("配置没有实质变化")
+            self._pending["edit"] = {
+                "index": follower_index,
+                "expected_key": follower_key(status.follower),
+                "expected_follower": copy.deepcopy(status.follower),
+                "preview": preview,
+            }
+            self._show_dialog(
+                "edit",
+                {
+                    "stage": "confirm",
+                    "previewText": format_changes(
+                        "配置修改预览（尚未保存）", preview.changes, EDIT_LABELS
+                    ),
+                    "confirmLabel": "确认保存",
+                },
+            )
+        except Exception as exc:
+            self._finish("edit", False, str(exc), {})
+
+    async def _confirm_edit(self) -> None:
+        try:
+            service = self._require_service()
+            pending = self._pending.pop("edit", None)
+            if not pending:
+                raise ValueError("编辑预览已失效，请重新操作")
+            index = pending["index"]
+            status = service.followers.get(index)
+            if status is None or status.is_checking:
+                raise ValueError("编辑目标已变化或正在检测，未写入配置")
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_follower,
+                index,
+                pending["preview"].follower,
+                expected_key=pending["expected_key"],
+                expected_follower=pending["expected_follower"],
+            )
+            updated = persisted.follower
+            old = status.follower
+            if index < len(service.cfg.followers):
+                service.cfg.followers[index] = updated
+            if follower_key(old) != follower_key(updated) or old.enabled != updated.enabled:
+                replacement = FollowerStatus(
+                    follower=updated,
+                    check_state="disabled" if not updated.enabled else "unknown",
+                )
+                if not updated.enabled:
+                    replacement.history.append(
+                        StatusHistoryEntry(
+                            at=datetime.datetime.now(),
+                            state="disabled",
+                            message="配置编辑后已禁用",
+                            is_live=False,
+                        )
+                    )
+                service.followers[index] = replacement
+            else:
+                status.follower = updated
+            service.get_platform_health(updated.platform)
+            self._emit_snapshot()
+            self._finish("edit", True, f"已保存 {updated.name} 的配置修改", {"close": True})
+        except Exception as exc:
+            self._finish("edit", False, str(exc), {})
+
+    # ---- P2：监控设置 ----------------------------------------------------
+
+    def load_settings(self) -> None:
+        self.schedule(self._load_settings)
+
+    async def _load_settings(self) -> None:
+        try:
+            service = self._require_service()
+            settings = service.config_manager.read_monitoring_settings()
+            payload = {
+                key: ("true" if value is True else "false" if value is False else str(value))
+                for key, value in settings.items()
+            }
+            payload["stage"] = "form"
+            self._show_dialog("settings", payload)
+        except Exception as exc:
+            self._finish("settings", False, str(exc), {})
+
+    def preview_settings(self, values: dict) -> None:
+        self.schedule(lambda: self._preview_settings(dict(values or {})))
+
+    async def _preview_settings(self, values: dict) -> None:
+        try:
+            service = self._require_service()
+            before = service.config_manager.read_monitoring_settings()
+            preview = service.config_manager.preview_monitoring_settings(values)
+            if not preview.has_changes:
+                raise ValueError("监控设置没有实质变化")
+            self._pending["settings"] = {"before": before, "preview": preview}
+            self._show_dialog(
+                "settings",
+                {
+                    "stage": "confirm",
+                    "previewText": format_changes(
+                        "监控设置预览（尚未保存）", preview.changes, SETTINGS_LABELS
+                    ),
+                    "confirmLabel": "确认保存",
+                },
+            )
+        except Exception as exc:
+            self._finish("settings", False, str(exc), {})
+
+    async def _confirm_settings(self) -> None:
+        try:
+            service = self._require_service()
+            pending = self._pending.pop("settings", None)
+            if not pending:
+                raise ValueError("设置预览已失效，请重新操作")
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_monitoring_settings,
+                pending["preview"].settings,
+                expected_settings=pending["before"],
+            )
+            for field, value in persisted.settings.items():
+                setattr(service.cfg, field, value)
+            service.apply_monitoring_settings()
+            self._emit_snapshot()
+            self._finish("settings", True, "监控设置已保存并立即生效", {"close": True})
+        except Exception as exc:
+            self._finish("settings", False, str(exc), {})
+
+    # ---- P2：平台代理 ----------------------------------------------------
+
+    def load_proxy(self) -> None:
+        self.schedule(self._load_proxy)
+
+    async def _load_proxy(self) -> None:
+        try:
+            service = self._require_service()
+            payload = {
+                platform: service.cfg.platform_proxies.get(platform, "")
+                for platform in sorted(PROXY_PLATFORMS)
+            }
+            payload["stage"] = "form"
+            self._show_dialog("proxy", payload)
+        except Exception as exc:
+            self._finish("proxy", False, str(exc), {})
+
+    def save_proxy(self, values: dict) -> None:
+        self.schedule(lambda: self._save_proxy(dict(values or {})))
+
+    async def _save_proxy(self, values: dict) -> None:
+        try:
+            service = self._require_service()
+            proxies = {
+                platform: str(values.get(platform, "")).strip()
+                for platform in PROXY_PLATFORMS
+                if str(values.get(platform, "")).strip()
+            }
+            candidate = copy.deepcopy(service.cfg)
+            candidate.platform_proxies = proxies
+            # save_config 会等待跨进程文件锁（最长 10 秒），不能阻塞事件循环。
+            await asyncio.to_thread(service.config_manager.save_config, candidate)
+            service.cfg.platform_proxies = dict(proxies)
+            set_platform_proxies(proxies)
+            description = ", ".join(f"{key}={value}" for key, value in sorted(proxies.items()))
+            self._finish(
+                "proxy", True, f"平台代理设置已保存：{description or '使用默认规则'}", {"close": True}
+            )
+        except Exception as exc:
+            self._finish("proxy", False, str(exc), {})
+
+    def test_proxy(self, values: dict) -> None:
+        self.schedule(lambda: self._test_proxy(dict(values or {})))
+
+    @staticmethod
+    async def _test_proxy_endpoint(platform: str, raw_value: str) -> dict:
+        explicit = raw_value.strip()
+        proxy_url = normalize_proxy_value(explicit) if explicit else proxy_for_platform(platform)
+        if proxy_url is None:
+            return {
+                "platform": platform,
+                "status": "direct",
+                "label": "直连",
+                "detail": "该平台不会经过代理",
+            }
+        from urllib.parse import urlparse
+
+        parsed = urlparse(proxy_url)
+        host = parsed.hostname
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            port = None
+        if not host or port is None:
+            return {
+                "platform": platform,
+                "status": "error",
+                "label": "地址无效",
+                "detail": "请填写端口、主机:端口或完整代理 URL",
+            }
+        try:
+            _reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=2.5
+            )
+            writer.close()
+            await writer.wait_closed()
+        except (OSError, asyncio.TimeoutError) as exc:
+            return {
+                "platform": platform,
+                "status": "error",
+                "label": "不可连接",
+                "detail": f"{host}:{port} 未响应（{redact_sensitive_text(str(exc))}）",
+            }
+        source = "自定义" if explicit else "默认"
+        return {
+            "platform": platform,
+            "status": "ok",
+            "label": "代理可连接",
+            "detail": f"{source}代理 {host}:{port}",
+        }
+
+    async def _test_proxy(self, values: dict) -> None:
+        try:
+            normalized_values = {
+                platform: str(values.get(platform, "")).strip()
+                for platform in sorted(PROXY_PLATFORMS)
+            }
+            results = await asyncio.gather(*(
+                self._test_proxy_endpoint(platform, normalized_values[platform])
+                for platform in sorted(PROXY_PLATFORMS)
+            ))
+            failed = sum(item["status"] == "error" for item in results)
+            direct = sum(item["status"] == "direct" for item in results)
+            summary = (
+                f"{failed} 个平台代理不可连接"
+                if failed
+                else f"代理检查通过；{direct} 个平台使用直连"
+            )
+            self._show_dialog(
+                "proxy",
+                {
+                    "stage": "form",
+                    **normalized_values,
+                    "health": results,
+                    "healthSummary": summary,
+                    "healthOk": failed == 0,
+                },
+            )
+        except Exception as exc:
+            self._finish("proxy", False, f"代理测试失败：{exc}", {})
+
+    # ---- P2：导入 --------------------------------------------------------
+
+    def preview_import(self, url: str, tag: str) -> None:
+        self.schedule(lambda: self._preview_import(str(url or ""), str(tag or "")))
+
+    async def _preview_import(self, url: str, tag: str) -> None:
+        try:
+            service = self._require_service()
+            preview = await ImportPreviewService(service.config_manager).preview(url, tag)
+            self._pending.pop("import", None)
+            if preview.can_confirm:
+                self._pending["import"] = preview
+            self._show_dialog(
+                "import",
+                {
+                    "stage": "confirm",
+                    "previewText": format_import_preview(preview),
+                    "canConfirm": preview.can_confirm,
+                    "requiresOverride": preview.requires_conflict_override,
+                    "confirmLabel": "确认冲突后导入" if preview.requires_conflict_override else "确认导入",
+                },
+            )
+        except Exception as exc:
+            self._finish("import", False, str(exc), {})
+
+    async def _confirm_import(self) -> None:
+        try:
+            service = self._require_service()
+            preview = self._pending.pop("import", None)
+            if preview is None:
+                raise ValueError("导入预览已失效，请重新操作")
+            follower = await asyncio.to_thread(
+                ImportPreviewService(service.config_manager).confirm,
+                preview,
+                confirmed=True,
+                allow_conflicts=preview.requires_conflict_override,
+            )
+            index = len(service.cfg.followers)
+            service.cfg.followers.append(follower)
+            service.followers[index] = FollowerStatus(
+                follower=follower,
+                check_state="disabled" if not follower.enabled else "unknown",
+            )
+            service.get_platform_health(follower.platform)
+            self._emit_snapshot()
+            self._finish("import", True, f"已导入 {follower.name}", {"close": True})
+        except Exception as exc:
+            self._finish("import", False, str(exc), {})
+
+    # ---- P2：确认分发 ----------------------------------------------------
+
+    def confirm_dialog(self, kind: str) -> None:
+        confirmers = {
+            "edit": self._confirm_edit,
+            "settings": self._confirm_settings,
+            "import": self._confirm_import,
+        }
+        confirmer = confirmers.get(str(kind or ""))
+        if confirmer is None:
+            self._finish(str(kind or ""), False, "该对话框没有确认步骤", {})
+            return
+        self.schedule(confirmer)

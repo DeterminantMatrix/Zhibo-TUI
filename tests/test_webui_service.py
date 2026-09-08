@@ -84,3 +84,193 @@ def test_service_survives_missing_plugin_registry_cleanup():
     service.stop(timeout=3)
     kinds = [kind for kind, _ in collector.events]
     assert "fatal" in kinds or "stopped" in kinds
+
+
+# ---- P2：事务对话框 ------------------------------------------------------
+
+
+def _wait_for(collector, predicate, timeout=6.0):
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate(collector.events):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _last_dialog(collector, kind):
+    matches = [p for k, p in collector.events if k == "dialog" and p["kind"] == kind]
+    return matches[-1]["payload"] if matches else None
+
+
+def _started_service(rows: str, collector):
+    from zhibo.plugins import _plugins, register_plugin
+
+    previous = dict(_plugins)
+    register_plugin(_OfflinePlugin())
+    fpath = _write_csv(rows)
+    service = WebMonitorService(collector, config_path=fpath)
+    service.start()
+    return service, fpath, previous
+
+
+def test_details_and_edit_transaction_roundtrip():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        # 等首轮检测结束，避免编辑撞上 is_checking 保护。
+        assert _wait_for(collector, lambda evs: any(
+            k == "polling" and not p.get("active") for k, p in evs
+        ))
+        service.load_details(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "edit" for k, p in evs
+        ))
+        payload = _last_dialog(collector, "edit")
+        assert payload["form"]["name"] == "主播一"
+        assert payload["detailRows"] and payload["pluginOptions"]
+
+        collector.events.clear()
+        service.preview_edit(0, {"name": "主播一改"})
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "edit" and p["payload"].get("stage") == "confirm"
+            for k, p in evs
+        ))
+        confirm = _last_dialog(collector, "edit")
+        assert "名称" in confirm["previewText"] and "主播一改" in confirm["previewText"]
+
+        collector.events.clear()
+        service.confirm_dialog("edit")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "edit" and p["ok"]
+            and p["payload"].get("close") for k, p in evs
+        ))
+        assert service._service.cfg.followers[0].name == "主播一改"
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_settings_preview_and_confirm_roundtrip():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        service.load_settings()
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "settings" for k, p in evs
+        ))
+        form = _last_dialog(collector, "settings")
+        assert form["stage"] == "form" and "poll_interval" in form
+        current = int(form["poll_interval"])
+        target = current + 1 if current < 3600 else current - 1
+
+        collector.events.clear()
+        service.preview_settings({"poll_interval": str(target)})
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "settings" and p["payload"].get("stage") == "confirm"
+            for k, p in evs
+        ))
+        confirm = _last_dialog(collector, "settings")
+        assert "轮询间隔" in confirm["previewText"]
+
+        collector.events.clear()
+        service.confirm_dialog("settings")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "settings" and p["ok"]
+            and p["payload"].get("close") for k, p in evs
+        ))
+        assert service._service.config_manager.read_monitoring_settings()["poll_interval"] == target
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+        Path(fpath).with_name("settings.csv").unlink(missing_ok=True)
+
+
+def test_proxy_load_test_and_save(monkeypatch):
+    import webui.service as service_module
+    from zhibo.proxy_config import PROXY_PLATFORMS, set_platform_proxies
+
+    # 隔离机器默认代理（settings.csv 里的 127.0.0.1:7890），保证测试确定性。
+    monkeypatch.setattr(service_module, "proxy_for_platform", lambda platform: None)
+
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        service.load_proxy()
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "proxy" for k, p in evs
+        ))
+        form = _last_dialog(collector, "proxy")
+        assert form["stage"] == "form"
+        for platform in PROXY_PLATFORMS:
+            assert platform in form
+
+        collector.events.clear()
+        values = {platform: "" for platform in PROXY_PLATFORMS}
+        values["twitch"] = "127.0.0.1:1"  # 保留端口上不会有服务 → 确定性失败
+        service.test_proxy(values)
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "proxy" and p["payload"].get("health")
+            for k, p in evs
+        ))
+        tested = _last_dialog(collector, "proxy")
+        assert tested["healthOk"] is False
+        by_platform = {item["platform"]: item for item in tested["health"]}
+        assert by_platform["youtube"]["status"] == "direct"
+        assert by_platform["twitch"]["status"] == "error"
+
+        collector.events.clear()
+        service.save_proxy({"twitch": "127.0.0.1:1080"})
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "proxy" and p["ok"]
+            and p["payload"].get("close") for k, p in evs
+        ))
+        assert service._service.cfg.platform_proxies == {"twitch": "127.0.0.1:1080"}
+    finally:
+        service.stop(timeout=3)
+        set_platform_proxies({})
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_import_preview_and_confirm_roundtrip():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        service.preview_import("https://www.twitch.tv/example", "测试标签")
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "import" and p["payload"].get("stage") == "confirm"
+            for k, p in evs
+        ))
+        confirm = _last_dialog(collector, "import")
+        assert confirm["canConfirm"] is True
+        assert "example" in confirm["previewText"]
+
+        collector.events.clear()
+        service.confirm_dialog("import")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "import" and p["ok"]
+            and p["payload"].get("close") for k, p in evs
+        ))
+        assert len(service._service.cfg.followers) == 2
+        assert service._service.cfg.followers[1].url == "https://www.twitch.tv/example"
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)

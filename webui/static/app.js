@@ -1,5 +1,6 @@
 /* ZHIBO Web 前端逻辑
  * P1：表格 / 快照推送 / 标签筛选 / 搜索 / 排序 / 行内画质与插件下拉
+ * P2：详情编辑 / 设置 / 代理 / 导入 事务对话框（表单 → 差异确认 → 保存）
  */
 "use strict";
 
@@ -13,6 +14,15 @@ const zhibo = {
   sortDesc: false,
   selectedIdx: -1,
   polling: false,
+  // 事务对话框状态机：kind + 当前舞台数据；formData 供确认页"返回"恢复表单。
+  dialog: { kind: "", data: {}, formData: null, busy: false },
+
+  DIALOG_TITLES: {
+    edit: "详情与修改",
+    settings: "监控设置",
+    proxy: "平台代理",
+    import: "导入直播间",
+  },
 
   // ---------- 快照与渲染 ----------
 
@@ -39,7 +49,10 @@ const zhibo = {
           );
           break;
         case "operationFinished":
-          this.setInfo(ev.payload.message || (ev.payload.ok ? "操作完成" : "操作失败"));
+          this.applyOperationResult(ev.payload);
+          break;
+        case "dialog":
+          this.applyDialogData(ev.payload);
           break;
         case "fatal":
           this.setInfo("致命错误：" + ev.payload.message);
@@ -209,6 +222,395 @@ const zhibo = {
       .replace(/"/g, "&quot;");
   },
 
+  // ---------- P2：事务对话框 ----------
+
+  h(tag, attrs = {}, text) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === "class") node.className = value;
+      else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+      else if (value !== undefined && value !== null) node.setAttribute(key, value);
+    }
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  },
+
+  formRow(labelText, control) {
+    const row = this.h("div", { class: "form-row" });
+    row.appendChild(this.h("label", { class: "form-label" }, labelText));
+    row.appendChild(control);
+    return row;
+  },
+
+  buttonRow(defs) {
+    const row = this.h("div", { class: "button-row" });
+    for (const def of defs) {
+      const btn = this.h("button", { onClick: def.onClick }, def.label);
+      if (def.primary) btn.classList.add("dialog-primary");
+      if (def.disabled) btn.disabled = true;
+      row.appendChild(btn);
+    }
+    return row;
+  },
+
+  dialogError() {
+    const err = this.dialog.data.error;
+    return this.h("div", { class: "dialog-error" + (err ? " show" : "") }, err || "");
+  },
+
+  clearDialogError() {
+    if (this.dialog.data && this.dialog.data.error) delete this.dialog.data.error;
+  },
+
+  applyDialogData(payload) {
+    const kind = payload.kind;
+    const incoming = payload.payload || {};
+    // 表单 → 确认：记住表单舞台的完整数据，"返回"时原样恢复。
+    if (
+      kind === this.dialog.kind &&
+      String(this.dialog.data.stage || "form") === "form" &&
+      String(incoming.stage) === "confirm"
+    ) {
+      this.dialog.formData = this.dialog.data;
+    }
+    this.dialog.kind = kind;
+    this.dialog.data = incoming;
+    this.dialog.busy = false;
+    this.renderDialog();
+  },
+
+  applyOperationResult(payload) {
+    if (payload.kind === this.dialog.kind) {
+      this.dialog.busy = false;
+      if (!payload.ok) {
+        // 失败留在当前舞台；就地显示错误，避免整表单重渲染丢掉已输入内容。
+        this.dialog.data = { ...this.dialog.data, error: payload.message || "操作失败" };
+        const errNode = document.querySelector("#dlgBody .dialog-error");
+        if (errNode) {
+          errNode.textContent = this.dialog.data.error;
+          errNode.classList.add("show");
+        } else {
+          this.renderDialog();
+        }
+      } else if (payload.payload && payload.payload.close) {
+        this.closeDialog();
+      }
+    }
+    this.setInfo(payload.message || (payload.ok ? "操作完成" : "操作失败"));
+  },
+
+  closeDialog() {
+    if (this.dialog.busy) return;
+    this.dialog = { kind: "", data: {}, formData: null, busy: false };
+    document.getElementById("dialogOverlay").hidden = true;
+  },
+
+  backToForm() {
+    if (this.dialog.busy) return;
+    if (!this.dialog.formData) {
+      this.closeDialog();
+      return;
+    }
+    this.dialog.data = this.dialog.formData;
+    this.dialog.formData = null;
+    this.renderDialog();
+  },
+
+  renderDialog() {
+    const overlay = document.getElementById("dialogOverlay");
+    if (!this.dialog.kind) {
+      overlay.hidden = true;
+      return;
+    }
+    overlay.hidden = false;
+    document.getElementById("dlgTitle").textContent =
+      this.DIALOG_TITLES[this.dialog.kind] || "对话框";
+    const stage = String(this.dialog.data.stage || "form");
+    const builders = {
+      edit: () => (stage === "confirm" ? this.buildConfirmBody() : this.buildEditForm()),
+      settings: () => (stage === "confirm" ? this.buildConfirmBody() : this.buildSettingsForm()),
+      proxy: () => this.buildProxyForm(),
+      import: () => (stage === "confirm" ? this.buildConfirmBody() : this.buildImportForm()),
+    };
+    const build = builders[this.dialog.kind];
+    const body = document.getElementById("dlgBody");
+    body.innerHTML = "";
+    body.appendChild(build ? build() : document.createTextNode("未知对话框"));
+  },
+
+  collectFormValues() {
+    const values = {};
+    document.querySelectorAll("#dlgBody [data-field]").forEach((node) => {
+      values[node.dataset.field] = node.value;
+    });
+    return values;
+  },
+
+  beginOp() {
+    this.dialog.busy = true;
+    this.clearDialogError();
+    const errNode = document.querySelector("#dlgBody .dialog-error");
+    if (errNode) {
+      errNode.textContent = "";
+      errNode.classList.remove("show");
+    }
+  },
+
+  buildDetailBox() {
+    const data = this.dialog.data;
+    const box = this.h("fieldset", { class: "detail-box" });
+    box.appendChild(this.h("legend", {}, data.detailTitle || "状态详情"));
+    for (const row of data.detailRows || []) {
+      const line = this.h("div", { class: "detail-line" });
+      line.appendChild(this.h("span", { class: "detail-label" }, row.label));
+      line.appendChild(
+        this.h(
+          "span",
+          { class: "detail-value tone-" + (row.tone || "normal"), title: row.value },
+          row.value
+        )
+      );
+      box.appendChild(line);
+    }
+    return box;
+  },
+
+  buildEditForm() {
+    const form = this.dialog.data.form || {};
+    const frag = document.createDocumentFragment();
+    const grid = this.h("div", { class: "edit-grid" });
+    grid.appendChild(this.buildDetailBox());
+
+    const box = this.h("fieldset", { class: "edit-box" });
+    box.appendChild(this.h("legend", {}, "编辑配置"));
+    const enabled = this.h("select", { "data-field": "enabled" });
+    for (const [value, text] of [["true", "启用监控"], ["false", "停用监控"]]) {
+      const opt = this.h("option", { value }, text);
+      if (String(form.enabled) === value) opt.selected = true;
+      enabled.appendChild(opt);
+    }
+    box.appendChild(this.formRow("启用", enabled));
+    box.appendChild(this.formRow("名称",
+      this.h("input", { type: "text", "data-field": "name", value: form.name || "" })));
+    box.appendChild(this.formRow("标签",
+      this.h("input", { type: "text", "data-field": "tags", value: form.tags || "", placeholder: "多个标签用 | 分隔" })));
+    const plugins = this.dialog.data.pluginOptions || [];
+    const pluginSel = this.h("select", { "data-field": "plugin" });
+    const curPlugin = form.plugin || "";
+    if (curPlugin && !plugins.includes(curPlugin)) {
+      pluginSel.appendChild(this.h("option", { value: curPlugin }, curPlugin));
+    }
+    for (const name of plugins) {
+      const opt = this.h("option", { value: name }, name);
+      if (name.toLowerCase() === String(curPlugin).toLowerCase()) opt.selected = true;
+      pluginSel.appendChild(opt);
+    }
+    box.appendChild(this.formRow("主插件", pluginSel));
+    box.appendChild(this.formRow("备用插件",
+      this.h("input", { type: "text", "data-field": "fallback_plugins", value: form.fallback_plugins || "", placeholder: "多个插件用 | 分隔" })));
+    box.appendChild(this.formRow("平台",
+      this.h("input", { type: "text", "data-field": "platform", value: form.platform || "" })));
+    box.appendChild(this.formRow("直播间地址",
+      this.h("input", { type: "text", "data-field": "url", value: form.url || "" })));
+    const qualitySel = this.h("select", { "data-field": "quality" });
+    const curQuality = form.quality || "best";
+    let matched = false;
+    for (const opt of this.dialog.data.qualityOptions || []) {
+      const node = this.h("option", { value: opt.value }, opt.label);
+      if (String(opt.value).toLowerCase() === String(curQuality).toLowerCase()) {
+        node.selected = true;
+        matched = true;
+      }
+      qualitySel.appendChild(node);
+    }
+    if (!matched) {
+      qualitySel.insertBefore(this.h("option", { value: curQuality }, curQuality), qualitySel.firstChild);
+    }
+    box.appendChild(this.formRow("画质", qualitySel));
+    box.appendChild(this.formRow("sport_id",
+      this.h("input", { type: "text", "data-field": "sport_id", value: form.sport_id || "" })));
+    box.appendChild(this.formRow("扩展字段",
+      this.h("textarea", { "data-field": "extra", rows: "5", class: "mono-field", spellcheck: "false" }, form.extra || "{}")));
+    grid.appendChild(box);
+    frag.appendChild(grid);
+    frag.appendChild(this.dialogError());
+    frag.appendChild(this.buttonRow([
+      { label: "保存修改", primary: true, onClick: () => this.submitEditPreview() },
+      { label: "关闭", onClick: () => this.closeDialog() },
+    ]));
+    return frag;
+  },
+
+  submitEditPreview() {
+    if (this.dialog.busy) return;
+    const values = this.collectFormValues();
+    this.beginOp();
+    window.pywebview.api.previewEdit(this.dialog.data.idx, values);
+  },
+
+  buildSettingsForm() {
+    const data = this.dialog.data;
+    const frag = document.createDocumentFragment();
+    const box = this.h("fieldset", {});
+    box.appendChild(this.h("legend", {}, "监控参数"));
+    const numberField = (field, label) => {
+      const input = this.h("input", {
+        type: "number", min: "1", "data-field": field, value: data[field] != null ? data[field] : "",
+      });
+      return this.formRow(label, input);
+    };
+    box.appendChild(numberField("poll_interval", "轮询间隔（秒）"));
+    box.appendChild(numberField("max_concurrent_checks", "最大并发检测"));
+    box.appendChild(numberField("failure_backoff_after", "失败后退避阈值"));
+    box.appendChild(numberField("failure_backoff_polls", "退避轮数"));
+    const notif = this.h("select", { "data-field": "notifications_enabled" });
+    for (const [value, text] of [["true", "开启"], ["false", "关闭"]]) {
+      const opt = this.h("option", { value }, text);
+      if (String(data.notifications_enabled) === value) opt.selected = true;
+      notif.appendChild(opt);
+    }
+    box.appendChild(this.formRow("桌面通知", notif));
+    frag.appendChild(box);
+    frag.appendChild(this.dialogError());
+    frag.appendChild(this.buttonRow([
+      { label: "保存修改", primary: true, onClick: () => this.submitSettings() },
+      { label: "关闭", onClick: () => this.closeDialog() },
+    ]));
+    return frag;
+  },
+
+  submitSettings() {
+    if (this.dialog.busy) return;
+    const values = this.collectFormValues();
+    this.beginOp();
+    window.pywebview.api.previewSettings(values);
+  },
+
+  buildProxyForm() {
+    const data = this.dialog.data;
+    const frag = document.createDocumentFragment();
+    const box = this.h("fieldset", {});
+    box.appendChild(this.h("legend", {}, "按平台配置代理（留空 = 默认规则）"));
+    const skip = new Set(["stage", "health", "healthSummary", "healthOk", "error"]);
+    for (const key of Object.keys(data)) {
+      if (skip.has(key)) continue;
+      box.appendChild(this.formRow(key,
+        this.h("input", { type: "text", "data-field": key, value: data[key] || "", placeholder: "主机:端口 或完整代理 URL" })));
+    }
+    frag.appendChild(box);
+    const health = data.health || [];
+    if (health.length || data.healthSummary) {
+      const healthBox = this.h("fieldset", { class: "proxy-health" });
+      healthBox.appendChild(this.h("legend", {}, "连通性测试"));
+      for (const item of health) {
+        const tone = item.status === "ok" ? "ok" : item.status === "error" ? "error" : "muted";
+        const line = this.h("div", { class: "detail-line" });
+        line.appendChild(this.h("span", { class: "detail-label" }, item.platform));
+        line.appendChild(
+          this.h("span", { class: "detail-value tone-" + tone, title: item.detail },
+            item.label + " — " + item.detail)
+        );
+        healthBox.appendChild(line);
+      }
+      if (data.healthSummary) {
+        const line = this.h("div", { class: "detail-line" });
+        line.appendChild(this.h("span", {
+          class: "detail-value tone-" + (data.healthOk ? "ok" : "error"),
+        }, data.healthSummary));
+        healthBox.appendChild(line);
+      }
+      frag.appendChild(healthBox);
+    }
+    frag.appendChild(this.dialogError());
+    frag.appendChild(this.buttonRow([
+      { label: "测试连接", onClick: () => this.submitProxyTest() },
+      { label: "保存", primary: true, onClick: () => this.submitProxySave() },
+      { label: "关闭", onClick: () => this.closeDialog() },
+    ]));
+    return frag;
+  },
+
+  submitProxyTest() {
+    if (this.dialog.busy) return;
+    const values = this.collectFormValues();
+    this.beginOp();
+    window.pywebview.api.testProxy(values);
+  },
+
+  submitProxySave() {
+    if (this.dialog.busy) return;
+    const values = this.collectFormValues();
+    this.beginOp();
+    window.pywebview.api.saveProxy(values);
+  },
+
+  buildImportForm() {
+    const data = this.dialog.data;
+    const frag = document.createDocumentFragment();
+    const box = this.h("fieldset", {});
+    box.appendChild(this.h("legend", {}, "导入直播间"));
+    box.appendChild(this.formRow("直播间地址",
+      this.h("input", { type: "text", "data-field": "url", value: data.url || "", placeholder: "粘贴平台直播间链接" })));
+    box.appendChild(this.formRow("标签",
+      this.h("input", { type: "text", "data-field": "tag", value: data.tag || "未分类" })));
+    frag.appendChild(box);
+    frag.appendChild(this.dialogError());
+    frag.appendChild(this.buttonRow([
+      { label: "获取预览", primary: true, onClick: () => this.submitImportPreview() },
+      { label: "关闭", onClick: () => this.closeDialog() },
+    ]));
+    return frag;
+  },
+
+  submitImportPreview() {
+    if (this.dialog.busy) return;
+    const values = this.collectFormValues();
+    this.beginOp();
+    window.pywebview.api.previewImport(values.url || "", values.tag || "未分类");
+  },
+
+  buildConfirmBody() {
+    const data = this.dialog.data;
+    const frag = document.createDocumentFragment();
+    frag.appendChild(this.h("pre", { class: "preview-text" }, data.previewText || ""));
+    frag.appendChild(this.dialogError());
+    const buttons = [];
+    if (this.dialog.kind === "import") {
+      buttons.push({
+        label: data.confirmLabel || "确认导入",
+        primary: true,
+        disabled: !data.canConfirm,
+        onClick: () => this.confirmDialog(),
+      });
+    } else {
+      buttons.push({
+        label: data.confirmLabel || "确认保存",
+        primary: true,
+        onClick: () => this.confirmDialog(),
+      });
+    }
+    buttons.push({ label: "返回", onClick: () => this.backToForm() });
+    buttons.push({ label: "关闭", onClick: () => this.closeDialog() });
+    frag.appendChild(this.buttonRow(buttons));
+    return frag;
+  },
+
+  confirmDialog() {
+    if (this.dialog.busy) return;
+    this.beginOp();
+    window.pywebview.api.confirmDialog(this.dialog.kind);
+  },
+
+  openImportDialog() {
+    this.dialog = {
+      kind: "import",
+      data: { stage: "form", url: "", tag: "未分类" },
+      formData: null,
+      busy: false,
+    };
+    this.renderDialog();
+  },
+
   // ---------- 交互 ----------
 
   wireTable() {
@@ -266,6 +668,27 @@ const zhibo = {
     document.getElementById("btnRefresh").addEventListener("click", () => {
       window.pywebview.api.refresh();
     });
+    document.getElementById("btnDetails").addEventListener("click", () => {
+      if (this.dialog.busy) return;
+      if (this.selectedIdx < 0) {
+        this.setInfo("请先在表格中选择一个直播间");
+        return;
+      }
+      window.pywebview.api.loadDetails(this.selectedIdx);
+    });
+    document.getElementById("btnImport").addEventListener("click", () => {
+      if (this.dialog.busy) return;
+      this.openImportDialog();
+    });
+    document.getElementById("btnProxy").addEventListener("click", () => {
+      if (this.dialog.busy) return;
+      window.pywebview.api.loadProxy();
+    });
+    document.getElementById("btnSettings").addEventListener("click", () => {
+      if (this.dialog.busy) return;
+      window.pywebview.api.loadSettings();
+    });
+    document.getElementById("dlgClose").addEventListener("click", () => this.closeDialog());
     const themeBtn = document.getElementById("btnTheme");
     themeBtn.addEventListener("click", () => {
       this.setTheme(document.body.classList.contains("theme-dark") ? "classic" : "dark");
@@ -281,6 +704,7 @@ const zhibo = {
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "F5") { e.preventDefault(); window.pywebview.api.refresh(); }
+      if (e.key === "Escape" && this.dialog.kind) { e.preventDefault(); this.closeDialog(); }
       const target = e.target;
       const typing = target && (target.tagName === "INPUT" || target.tagName === "SELECT");
       if (!typing && (e.key === "r" || e.key === "R")) window.pywebview.api.refresh();

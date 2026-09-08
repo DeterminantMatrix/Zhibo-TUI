@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from urllib.parse import urlencode
 
-from zhibo.app_logging import redact_sensitive_text, redact_url
+from zhibo.app_logging import redact_sensitive_mapping, redact_sensitive_text, redact_url
 from zhibo.monitor import FollowerStatus
 
 
@@ -142,3 +143,72 @@ def sort_snapshots(
     ordered = sorted(rows, key=column_value, reverse=descending)
     ordered.sort(key=lambda row: not row.get("live", False))
     return ordered
+
+
+# ---- 对话框事务的纯展示格式化（确认页差异文本；webui 与旧界面共用） ----
+
+EDIT_LABELS = {
+    "enabled": "启用",
+    "name": "名称",
+    "tags": "标签",
+    "plugin": "主插件",
+    "fallback_plugins": "备用插件",
+    "platform": "平台",
+    "url": "直播间地址",
+    "quality": "画质",
+    "sport_id": "sport_id",
+    "extra": "扩展字段",
+}
+
+SETTINGS_LABELS = {
+    "poll_interval": "轮询间隔（秒）",
+    "max_concurrent_checks": "最大并发检测",
+    "failure_backoff_after": "失败后退避阈值",
+    "failure_backoff_polls": "退避轮数",
+    "notifications_enabled": "桌面通知",
+}
+
+
+def display_value(value) -> str:
+    safe = redact_sensitive_mapping(value)
+    if isinstance(safe, bool):
+        return "true" if safe else "false"
+    if isinstance(safe, (dict, list, tuple)):
+        return json.dumps(safe, ensure_ascii=False, sort_keys=True)
+    return redact_sensitive_text(str(safe))
+
+
+def format_changes(title: str, changes: dict, labels: dict | None = None) -> str:
+    """把字段差异渲染成确认页文本；value 一律先脱敏。"""
+    labels = labels or {}
+    if not changes:
+        return "没有检测到实质变化。"
+    lines = [title]
+    for field, pair in changes.items():
+        before, after = pair
+        lines.append(f"{labels.get(field, field)}：{display_value(before)} → {display_value(after)}")
+    lines.extend(("", "确认后会重新核对磁盘配置并以原子方式写入。"))
+    return "\n".join(lines)
+
+
+def format_import_preview(preview) -> str:
+    lines = ["导入预览（尚未写入配置）"]
+    follower = preview.follower
+    if follower is not None:
+        lines.extend(
+            (
+                f"名称：{redact_sensitive_text(follower.name)}",
+                f"平台：{redact_sensitive_text(follower.platform or '-')}",
+                f"插件：{redact_sensitive_text(follower.plugin)}",
+                f"备用插件：{redact_sensitive_text(', '.join(follower.fallback_plugins) or '-')}",
+                f"标签：{redact_sensitive_text(', '.join(follower.tags) or '未分类')}",
+                f"地址：{redact_sensitive_text(follower.url)}",
+                f"画质：{redact_sensitive_text(follower.quality or 'best')}",
+            )
+        )
+    if preview.messages:
+        lines.append("")
+        lines.extend(f"注意：{redact_sensitive_text(message)}" for message in preview.messages)
+    elif follower is not None:
+        lines.extend(("", "校验通过；确认后才会写入 followers.csv。"))
+    return "\n".join(lines)

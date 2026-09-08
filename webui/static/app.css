@@ -244,6 +244,151 @@ tr.selected .err-text { color: #ff9090; }
 }
 .status-bar-grow { flex: 1 1 auto; }
 
+/* 状态栏左侧的对话框入口（导入/代理/设置） */
+.dialog-launchers {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 3px;
+}
+.dialog-launchers button {
+  height: 22px;
+  min-width: 0;
+  padding: 1px 9px;
+  font-size: 12px;
+}
+
+/* ---------- P2 事务对话框 ---------- */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.dialog-overlay[hidden] { display: none; }
+.dialog-window {
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.4);
+}
+.dialog-window .title-bar { user-select: none; flex: 0 0 auto; }
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  background: var(--win-face);
+  color: var(--field-text);
+  font-size: 12px;
+}
+.dialog-body fieldset {
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  padding: 6px 8px;
+  margin: 0 0 6px;
+  min-width: 0;
+}
+.dialog-body legend { font-size: 12px; padding: 0 4px; }
+
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+.form-label {
+  flex: 0 0 92px;
+  font-size: 12px;
+  color: var(--field-text);
+}
+.form-row input[type="text"], .form-row input[type="number"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 5px;
+  background: var(--field-bg);
+  color: var(--field-text);
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+}
+.form-row textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 5px;
+  background: var(--field-bg);
+  color: var(--field-text);
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  resize: vertical;
+}
+.mono-field { font-family: Consolas, monospace; }
+
+/* 详情+编辑：左状态右表单 */
+.edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 6px;
+}
+@media (max-width: 720px) {
+  .edit-grid { grid-template-columns: 1fr; }
+}
+.detail-line {
+  display: flex;
+  gap: 6px;
+  padding: 1px 0;
+  font-size: 12px;
+}
+.detail-label { flex: 0 0 86px; color: var(--hint-text); }
+.detail-value { flex: 1 1 auto; overflow-wrap: anywhere; }
+.tone-ok      { color: #008000; }
+.tone-warning { color: #a06000; }
+.tone-error   { color: #c00000; }
+.tone-muted   { color: var(--hint-text); }
+body.theme-dark .tone-ok      { color: #5fd75f; }
+body.theme-dark .tone-warning { color: #e0a040; }
+body.theme-dark .tone-error   { color: #ff8080; }
+
+.preview-text {
+  white-space: pre-wrap;
+  margin: 0 0 6px;
+  padding: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  max-height: 46vh;
+  overflow: auto;
+  background: var(--field-bg);
+  color: var(--field-text);
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+}
+.button-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+.button-row button {
+  min-width: 88px;
+  height: 26px;
+  font-size: 12px;
+}
+.dialog-error {
+  display: none;
+  margin-top: 6px;
+  color: #c00000;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+.dialog-error.show { display: block; }
+body.theme-dark .dialog-error { color: #ff8080; }
+
 /* ---------- 暗色模式对 98.css 原生控件的覆盖 ---------- */
 body.theme-dark button:not(.title-bar-controls button):not(.tag-tab):not(.menu-item) {
   background: var(--win-face);

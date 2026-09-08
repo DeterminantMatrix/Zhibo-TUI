@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>直播监控工具</title>
-<link rel="stylesheet" href="98.css?v=3">
-<link rel="stylesheet" href="app.css?v=3">
+<link rel="stylesheet" href="98.css?v=4">
+<link rel="stylesheet" href="app.css?v=4">
 </head>
 <body>
   <div class="window app-window">
@@ -28,6 +28,7 @@
     <div class="toolbar">
       <button id="btnRefresh">↻ 刷新 F5</button>
       <span class="toolbar-sep"></span>
+      <button id="btnDetails">详情 / 编辑</button>
       <input type="text" id="searchBox" class="search-box" placeholder="搜索主播、平台、标题…">
       <label class="filter-label">状态
         <select id="stateFilter">
@@ -65,12 +66,29 @@
     </div>
 
     <div class="status-bar">
+      <div class="status-bar-field dialog-launchers">
+        <button id="btnImport">导入</button>
+        <button id="btnProxy">代理</button>
+        <button id="btnSettings">设置</button>
+      </div>
       <div class="status-bar-field" id="statusSummary">在线 0 / 总计 0</div>
       <div class="status-bar-field" id="statusPoll">等待监控核心…</div>
-      <div class="status-bar-field status-bar-grow" id="statusInfo">P1</div>
+      <div class="status-bar-field status-bar-grow" id="statusInfo">P2</div>
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <div class="dialog-overlay" id="dialogOverlay" hidden>
+    <div class="window dialog-window">
+      <div class="title-bar">
+        <div class="title-bar-text" id="dlgTitle">对话框</div>
+        <div class="title-bar-controls">
+          <button aria-label="Close" id="dlgClose"></button>
+        </div>
+      </div>
+      <div class="dialog-body" id="dlgBody"></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=4"></script>
 </body>
 </html>

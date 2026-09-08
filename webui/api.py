@@ -1,6 +1,7 @@
 """JS 桥 — 前端通过 window.pywebview.api.* 调用的 Python 接口。
 
 P0/P1：窗口控制 + 快照/刷新/画质/插件。
+P2：详情编辑/设置/代理/导入 四个事务对话框。
 """
 from __future__ import annotations
 
@@ -79,3 +80,41 @@ class ZhiboApi:
     def setPlugin(self, follower_index: int, plugin: str) -> None:
         if self._service is not None:
             self._service.set_plugin(int(follower_index), str(plugin))
+
+    # ---- P2：事务对话框 ---------------------------------------------------
+
+    def loadDetails(self, follower_index: int) -> None:
+        if self._service is not None:
+            self._service.load_details(int(follower_index))
+
+    def previewEdit(self, follower_index: int, values: dict) -> None:
+        if self._service is not None:
+            self._service.preview_edit(int(follower_index), dict(values or {}))
+
+    def confirmDialog(self, kind: str) -> None:
+        if self._service is not None:
+            self._service.confirm_dialog(str(kind))
+
+    def loadSettings(self) -> None:
+        if self._service is not None:
+            self._service.load_settings()
+
+    def previewSettings(self, values: dict) -> None:
+        if self._service is not None:
+            self._service.preview_settings(dict(values or {}))
+
+    def loadProxy(self) -> None:
+        if self._service is not None:
+            self._service.load_proxy()
+
+    def saveProxy(self, values: dict) -> None:
+        if self._service is not None:
+            self._service.save_proxy(dict(values or {}))
+
+    def testProxy(self, values: dict) -> None:
+        if self._service is not None:
+            self._service.test_proxy(dict(values or {}))
+
+    def previewImport(self, url: str, tag: str) -> None:
+        if self._service is not None:
+            self._service.preview_import(str(url or ""), str(tag or ""))
