@@ -415,3 +415,87 @@ def test_notify_uri_and_dry_run_notifier():
         "idx": 3, "name": "老苗", "message": "布冬日 vs 维拉", "launch": "zhibo://play/3",
     }
     assert notifier.sent[1]["message"] == "正在直播"
+
+
+# ---- P4：更新中心与下载 ------------------------------------------------------
+
+
+def test_update_center_lists_all_items():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        service.load_update_center()
+        assert _wait_for(collector, lambda evs: any(
+            k == "dialog" and p["kind"] == "update" and p["payload"].get("stage") == "form"
+            for k, p in evs
+        ))
+        # 打开后自动全检的 checked 补丁会随后到达；条目清单取第一条 form 事件。
+        forms = [
+            p for k, p in collector.events
+            if k == "dialog" and p["kind"] == "update" and p["payload"].get("stage") == "form"
+        ]
+        payload = forms[0]["payload"]
+        values = [item["value"] for item in payload["items"]]
+        # python/mpv/ffmpeg/uosc + 三个 PyPI 包 + fs1 + bilibili_cookie
+        for expected in (
+            "python", "mpv", "ffmpeg", "uosc",
+            "streamlink", "streamget", "yt-dlp", "fs1", "bilibili_cookie",
+        ):
+            assert expected in values
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_run_update_rejects_invalid_target_and_empty_content():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        service.run_update("not-a-target")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "update" and not p["ok"]
+            and "更新目标无效" in p["message"] for k, p in evs
+        ))
+
+        collector.events.clear()
+        service.run_update("bilibili_cookie", "   ")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "update" and not p["ok"]
+            and "cookies.txt" in p["message"] for k, p in evs
+        ))
+
+        collector.events.clear()
+        service.run_update("fs1", "")
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "update" and not p["ok"]
+            and "curl" in p["message"] for k, p in evs
+        ))
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)
+
+
+def test_start_download_without_formats_fails_cleanly():
+    collector = _Collector()
+    service, fpath, previous = _started_service(
+        "true,主播一,游戏,webui_offline,,douyu,https://douyu.com/1,best,\n", collector
+    )
+    try:
+        service.start_download(0)
+        assert _wait_for(collector, lambda evs: any(
+            k == "operationFinished" and p["kind"] == "download" and not p["ok"]
+            and "已失效" in p["message"] for k, p in evs
+        ))
+    finally:
+        service.stop(timeout=3)
+        _plugins.clear()
+        _plugins.update(previous)
+        Path(fpath).unlink(missing_ok=True)

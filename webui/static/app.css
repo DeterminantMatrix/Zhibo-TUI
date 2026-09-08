@@ -433,6 +433,134 @@ body.theme-dark .tone-error   { color: #ff8080; }
 .dialog-error.show { display: block; }
 body.theme-dark .dialog-error { color: #ff8080; }
 
+/* ---------- P4 更新中心 / 下载 ---------- */
+.dialog-window.wide { width: min(920px, 96vw); }
+
+.update-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 1.4fr;
+  gap: 6px;
+}
+@media (max-width: 760px) {
+  .update-grid { grid-template-columns: 1fr; }
+}
+.update-list {
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  background: var(--field-bg);
+  overflow: auto;
+  max-height: 56vh;
+}
+.update-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  border: 0;
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--field-text);
+  border-bottom: 1px solid var(--table-grid);
+}
+.update-item:hover { background: var(--table-hover); }
+.update-item.active {
+  background: var(--table-selected);
+  color: var(--table-selected-text);
+}
+.update-item-head { display: flex; align-items: center; gap: 6px; }
+.update-item-label { font-weight: bold; }
+.update-item-status { margin-left: auto; font-size: 12px; }
+.update-item-hint {
+  font-size: 11px;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-checking { color: #c8a800; }
+.st-current   { color: #00a800; }
+.st-install, .st-update { color: #0000c0; }
+.st-unknown, .st-failed { color: #c00000; }
+body.theme-dark .st-checking { color: #e0c040; }
+body.theme-dark .st-current  { color: #5fd75f; }
+body.theme-dark .st-install, body.theme-dark .st-update { color: #80a0ff; }
+body.theme-dark .st-unknown, body.theme-dark .st-failed { color: #ff8080; }
+.update-item.active .st-checking, .update-item.active .st-install,
+.update-item.active .st-update { color: #c0d0ff; }
+.update-item.active .st-unknown, .update-item.active .st-failed { color: #ffb0b0; }
+
+.update-detail-box { margin: 0; }
+.update-desc { margin: 2px 0 6px; font-size: 12px; }
+.update-content-hint { margin: 6px 0 4px; font-size: 12px; color: var(--hint-text); }
+.update-footnote { margin-top: 6px; font-size: 11px; color: var(--hint-text); }
+
+/* 98 分段蓝块进度条 */
+.progress-pane {
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  background: var(--field-bg);
+  padding: 12px;
+}
+.progress-pane.prog-failed { border-color: #c00000; }
+.progress-pane.prog-done { border-color: #000080; }
+.progress-title { font-size: 13px; font-weight: bold; margin-bottom: 4px; }
+.progress-pane.prog-failed .progress-title { color: #c00000; }
+.progress-pane.prog-done .progress-title,
+.progress-pane:not(.prog-failed):not(.prog-done) .progress-title { color: #000080; }
+body.theme-dark .progress-pane.prog-done .progress-title,
+body.theme-dark .progress-pane:not(.prog-failed):not(.prog-done) .progress-title { color: #80a0ff; }
+body.theme-dark .progress-pane.prog-failed .progress-title { color: #ff8080; }
+.progress-text { font-size: 12px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.seg-progress {
+  display: flex;
+  gap: 2px;
+  height: 20px;
+  padding: 2px;
+  background: var(--field-bg);
+  border: 1px solid;
+  border-color: var(--win-shadow) var(--win-light) var(--win-light) var(--win-shadow);
+  overflow: hidden;
+}
+.seg-progress span {
+  flex: 1 1 0;
+  background: #000080;
+  min-width: 6px;
+}
+body.theme-dark .seg-progress span { background: #80a0ff; }
+.seg-progress span.off { background: transparent; }
+.seg-progress.indeterminate span {
+  background: transparent;
+  animation: segblink 1.1s steps(1) infinite;
+}
+body.theme-dark .seg-progress.indeterminate span { background: transparent; }
+@keyframes segblink {
+  0% { background: transparent; }
+  15% { background: #000080; }
+  45% { background: transparent; }
+}
+body.theme-dark .seg-progress.indeterminate span {
+  animation-name: segblink-dark;
+}
+@keyframes segblink-dark {
+  0% { background: transparent; }
+  15% { background: #80a0ff; }
+  45% { background: transparent; }
+}
+.progress-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.progress-pct { font-size: 11px; color: var(--hint-text); }
+.progress-flex { flex: 1 1 auto; }
+
+/* 下载格式单选列表 */
+.download-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 12px;
+}
+
 /* ---------- 暗色模式对 98.css 原生控件的覆盖 ---------- */
 body.theme-dark button:not(.title-bar-controls button):not(.tag-tab):not(.menu-item) {
   background: var(--win-face);

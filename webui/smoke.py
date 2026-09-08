@@ -76,6 +76,27 @@ PROBE_JS = r"""
       await sleep(300);
       out.menuEditClosed = document.getElementById('dialogOverlay').hidden;
     }
+
+    // 更新中心：打开 → 条目列表渲染 → 关闭（后台远端检查继续跑也不得再弹回）。
+    document.getElementById('btnUpdate').click();
+    await sleep(900);
+    out.updateOpened = window.zhibo.dialog.kind === 'update';
+    out.updateItems = (window.zhibo.dialog.data.items || []).length;
+    close = findBtn('关闭');
+    if (close) close.click();
+    await sleep(400);
+    out.updateClosed = document.getElementById('dialogOverlay').hidden;
+    await sleep(1200);
+    out.updateStaysClosed = document.getElementById('dialogOverlay').hidden;
+
+    // 下载对话框：本地表单打开 → 关闭。
+    document.getElementById('btnDownload').click();
+    await sleep(300);
+    out.downloadOpened = window.zhibo.dialog.kind === 'download';
+    close = findBtn('关闭');
+    if (close) close.click();
+    await sleep(300);
+    out.downloadClosed = document.getElementById('dialogOverlay').hidden;
   } catch (err) {
     out.error = String((err && err.message) || err);
   }
@@ -84,7 +105,7 @@ PROBE_JS = r"""
 """
 
 
-def run_dialog_probe(window, timeout: float = 20.0) -> dict[str, Any]:
+def run_dialog_probe(window, timeout: float = 30.0) -> dict[str, Any]:
     """注入探针并等待结果；返回解析后的检查项字典（超时返回带 error 的字典）。"""
     result_box: dict[str, str] = {}
 
@@ -139,5 +160,11 @@ def verdict(checks: dict[str, Any]) -> tuple[bool, str]:
         and bool(checks.get("menuDetailFound"))
         and bool(checks.get("menuEditDialog"))
         and bool(checks.get("menuEditClosed"))
+        and bool(checks.get("updateOpened"))
+        and int(checks.get("updateItems") or 0) >= 9
+        and bool(checks.get("updateClosed"))
+        and bool(checks.get("updateStaysClosed"))
+        and bool(checks.get("downloadOpened"))
+        and bool(checks.get("downloadClosed"))
     )
     return ok, json.dumps(checks, ensure_ascii=False)

@@ -149,3 +149,29 @@ class ZhiboApi:
     def toggleNotifications(self) -> None:
         if self._service is not None:
             self._service.toggle_notifications()
+
+    # ---- P4：更新中心与下载 -------------------------------------------------
+
+    def loadUpdateCenter(self) -> None:
+        if self._service is not None:
+            self._service.load_update_center()
+
+    def checkUpdate(self, target: str) -> None:
+        if self._service is not None:
+            self._service.check_update(str(target))
+
+    def checkUpdateAll(self) -> None:
+        if self._service is not None:
+            self._service.check_update_all()
+
+    def runUpdate(self, target: str, content: str = "") -> None:
+        if self._service is not None:
+            self._service.run_update(str(target), str(content or ""))
+
+    def listDownloadFormats(self, url: str) -> None:
+        if self._service is not None:
+            self._service.load_download_formats(str(url or ""))
+
+    def startDownload(self, format_index: int) -> None:
+        if self._service is not None:
+            self._service.start_download(int(format_index))

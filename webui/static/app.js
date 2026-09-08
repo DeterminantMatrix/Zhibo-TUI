@@ -25,6 +25,8 @@ const zhibo = {
     proxy: "平台代理",
     import: "导入直播间",
     delete: "删除直播间",
+    update: "更新中心",
+    download: "视频下载",
   },
 
   // ---------- 快照与渲染 ----------
@@ -63,6 +65,17 @@ const zhibo = {
           break;
         case "streamUrl":
           this.copyText(ev.payload.url);
+          break;
+        case "progress":
+          if (this.dialog.kind === ev.payload.kind) {
+            this.dialog.data = {
+              ...this.dialog.data,
+              stage: "progress",
+              progress: ev.payload.value,
+              progressText: ev.payload.text,
+            };
+            this.renderDialog();
+          }
           break;
         case "fatal":
           this.setInfo("致命错误：" + ev.payload.message);
@@ -280,11 +293,35 @@ const zhibo = {
   applyDialogData(payload) {
     const kind = payload.kind;
     const incoming = payload.payload || {};
+    const stage = String(incoming.stage || "form");
+    // 关闭状态下只接受"打开型"事件；checked/progress 等续传直接丢弃，
+    // 避免后台检查在用户关闭对话框后又把它弹回来。
+    if (!this.dialog.kind && !["form", "confirm", "formats"].includes(stage)) return;
+    if (kind === this.dialog.kind) {
+      // 更新中心：单条检查结果按 target 打补丁回表单（与 Qt 状态机一致）。
+      if (kind === "update" && stage === "checked") {
+        const target = String(incoming.target || "");
+        const patch = incoming.item || {};
+        const items = (this.dialog.data.items || []).map((item) =>
+          item.value === target ? { ...item, ...patch } : item
+        );
+        this.dialog.data = { ...this.dialog.data, stage: "form", target, items };
+        this.renderDialog();
+        return;
+      }
+      // 进度/完成态合并进现有数据。
+      if (stage === "progress" || stage === "done") {
+        this.dialog.data = { ...this.dialog.data, ...incoming };
+        this.dialog.busy = false;
+        this.renderDialog();
+        return;
+      }
+    }
     // 表单 → 确认：记住表单舞台的完整数据，"返回"时原样恢复。
     if (
       kind === this.dialog.kind &&
       String(this.dialog.data.stage || "form") === "form" &&
-      String(incoming.stage) === "confirm"
+      stage === "confirm"
     ) {
       this.dialog.formData = this.dialog.data;
     }
@@ -298,15 +335,54 @@ const zhibo = {
     if (payload.kind === this.dialog.kind) {
       this.dialog.busy = false;
       if (!payload.ok) {
-        // 失败留在当前舞台；就地显示错误，避免整表单重渲染丢掉已输入内容。
-        this.dialog.data = { ...this.dialog.data, error: payload.message || "操作失败" };
-        const errNode = document.querySelector("#dlgBody .dialog-error");
-        if (errNode) {
-          errNode.textContent = this.dialog.data.error;
-          errNode.classList.add("show");
-        } else {
+        // 更新/下载失败切到 failed 舞台（进度区显示）；其余就地报错不丢表单。
+        if (payload.kind === "update" || payload.kind === "download") {
+          this.dialog.data = {
+            ...this.dialog.data,
+            stage: "failed",
+            progressText: payload.message || "操作失败",
+          };
           this.renderDialog();
+        } else {
+          this.dialog.data = { ...this.dialog.data, error: payload.message || "操作失败" };
+          const errNode = document.querySelector("#dlgBody .dialog-error");
+          if (errNode) {
+            errNode.textContent = this.dialog.data.error;
+            errNode.classList.add("show");
+          } else {
+            this.renderDialog();
+          }
         }
+      } else if (payload.payload && payload.payload.done) {
+        const data = this.dialog.data;
+        const merged = { ...data, stage: "done", progress: 100, progressText: payload.message };
+        if (payload.kind === "update" && payload.payload.downloaded === true) {
+          const target = String(payload.payload.target || data.target || "");
+          merged.target = target;
+          merged.items = (data.items || []).map((item) => {
+            if (item.value !== target) return item;
+            const next = { ...item };
+            if (payload.payload.version) {
+              next.version = String(payload.payload.version);
+              next.installed = true;
+            }
+            next.lastUpdated = "刚刚";
+            if (next.kind === "tool" || next.kind === "package") {
+              Object.assign(next, {
+                actionLabel: "检查更新",
+                actionEnabled: true,
+                actionKind: "check",
+                updateStatus: "unchecked",
+                updateHint: "更新完成；可按需再次检查",
+                remoteVersion: "",
+                downloadSize: "",
+              });
+            }
+            return next;
+          });
+        }
+        this.dialog.data = merged;
+        this.renderDialog();
       } else if (payload.payload && payload.payload.close) {
         this.closeDialog();
       }
@@ -338,6 +414,8 @@ const zhibo = {
       return;
     }
     overlay.hidden = false;
+    const dialogWindow = overlay.querySelector(".dialog-window");
+    dialogWindow.classList.toggle("wide", this.dialog.kind === "update" || this.dialog.kind === "download");
     document.getElementById("dlgTitle").textContent =
       this.DIALOG_TITLES[this.dialog.kind] || "对话框";
     const stage = String(this.dialog.data.stage || "form");
@@ -346,6 +424,8 @@ const zhibo = {
       settings: () => (stage === "confirm" ? this.buildConfirmBody() : this.buildSettingsForm()),
       proxy: () => this.buildProxyForm(),
       import: () => (stage === "confirm" ? this.buildConfirmBody() : this.buildImportForm()),
+      update: () => this.buildUpdateCenter(),
+      download: () => this.buildDownload(),
     };
     const build = builders[this.dialog.kind];
     const body = document.getElementById("dlgBody");
@@ -629,6 +709,259 @@ const zhibo = {
     this.renderDialog();
   },
 
+  // ---------- P4：更新中心与下载 ----------
+
+  updateStatusGlyph(item) {
+    switch (item.updateStatus) {
+      case "checking": return "…";
+      case "current": return "✓";
+      case "install":
+      case "update": return "↑";
+      case "unknown":
+      case "failed": return "!";
+      default: return "";
+    }
+  },
+
+  buildUpdateCenter() {
+    const data = this.dialog.data;
+    if (["progress", "done", "failed"].includes(String(data.stage || "form"))) {
+      return this.buildProgressPane();
+    }
+    const frag = document.createDocumentFragment();
+    const items = data.items || [];
+    const selected = items.find((item) => item.value === data.target) || items[0] || null;
+    const grid = this.h("div", { class: "update-grid" });
+
+    const list = this.h("div", { class: "update-list" });
+    for (const item of items) {
+      const isActive = selected && item.value === selected.value;
+      const row = this.h("button", {
+        class: "update-item" + (isActive ? " active" : ""),
+        onClick: () => {
+          this.dialog.data = { ...this.dialog.data, target: item.value };
+          this.renderDialog();
+        },
+      });
+      const head = this.h("div", { class: "update-item-head" });
+      head.appendChild(this.h("span", { class: "update-item-label" }, item.label));
+      head.appendChild(this.h("span", {
+        class: "update-item-status st-" + (item.updateStatus || "unchecked"),
+      }, this.updateStatusGlyph(item)));
+      row.appendChild(head);
+      row.appendChild(this.h("div", { class: "update-item-hint" },
+        (item.version || "-") + (item.updateHint ? " · " + item.updateHint : "")));
+      list.appendChild(row);
+    }
+    grid.appendChild(list);
+
+    const detail = this.h("div", { class: "update-detail" });
+    if (selected) {
+      const box = this.h("fieldset", { class: "update-detail-box" });
+      box.appendChild(this.h("legend", {}, selected.label));
+      box.appendChild(this.h("div", { class: "update-desc" }, selected.description || ""));
+      const metaRows = [
+        ["当前版本", selected.version || "-"],
+        ["来源", selected.source || "-"],
+        ["上次更新", selected.lastUpdated || "-"],
+      ];
+      for (const [label, value] of metaRows) {
+        const line = this.h("div", { class: "detail-line" });
+        line.appendChild(this.h("span", { class: "detail-label" }, label));
+        line.appendChild(this.h("span", { class: "detail-value" }, value));
+        box.appendChild(line);
+      }
+      if (selected.updateHint) {
+        const line = this.h("div", { class: "detail-line" });
+        line.appendChild(this.h("span", { class: "detail-label" }, "状态"));
+        line.appendChild(this.h("span", {
+          class: "detail-value tone-" +
+            (selected.updateStatus === "unknown" ? "error"
+              : selected.updateStatus === "current" || selected.updateStatus === "checking" ? "ok" : "normal"),
+        }, selected.updateHint));
+        box.appendChild(line);
+      }
+      if (selected.value === "fs1" || selected.value === "bilibili_cookie") {
+        box.appendChild(this.h("div", { class: "update-content-hint" },
+          selected.value === "fs1"
+            ? "粘贴 FS /v1/room curl，或 Tampermonkey 导出的 zhibo.fs1-auth JSON。"
+            : "粘贴本人登录 B站后导出的 Netscape cookies.txt；请勿粘贴请求头或他人凭据。"));
+        box.appendChild(this.h("textarea", {
+          "data-field": "updateContent",
+          rows: "5",
+          class: "mono-field",
+          spellcheck: "false",
+          placeholder: selected.value === "fs1" ? "curl 或 FS1 授权 JSON …" : "# Netscape HTTP Cookie File…",
+        }, ""));
+      }
+      detail.appendChild(box);
+
+      const btnRow = this.h("div", { class: "button-row" });
+      const actionBtn = this.h("button", {
+        class: "dialog-primary",
+        onClick: () => this.submitUpdateAction(selected),
+      }, (selected.actionLabel || "操作") + " " + selected.label);
+      if (!selected.actionEnabled) actionBtn.disabled = true;
+      btnRow.appendChild(actionBtn);
+      detail.appendChild(btnRow);
+      if (selected.kind === "tool") {
+        detail.appendChild(this.h("div", { class: "update-footnote" },
+          "仅在检查判定需要安装、更新或迁移时下载；安装前校验版本、体积和 SHA-256"));
+      } else if (selected.kind === "package") {
+        detail.appendChild(this.h("div", { class: "update-footnote" },
+          "版本来自 PyPI；执行前会再次比较，不会盲目运行 pip 更新"));
+      } else if (selected.value === "bilibili_cookie") {
+        detail.appendChild(this.h("div", { class: "update-footnote" },
+          "Cookie 内容不会进入日志或更新记录"));
+      }
+    }
+    grid.appendChild(detail);
+    frag.appendChild(grid);
+    frag.appendChild(this.buttonRow([
+      { label: "关闭", onClick: () => this.closeDialog() },
+    ]));
+    return frag;
+  },
+
+  submitUpdateAction(item) {
+    if (item.actionKind === "check" || item.actionKind === "recheck") {
+      window.pywebview.api.checkUpdate(item.value);
+      return;
+    }
+    const contentNode = document.querySelector('#dlgBody [data-field="updateContent"]');
+    const content = contentNode ? contentNode.value : "";
+    window.pywebview.api.runUpdate(item.value, content);
+    if (item.value === "bilibili_cookie" && contentNode) contentNode.value = "";
+  },
+
+  buildProgressPane() {
+    const data = this.dialog.data;
+    const stage = String(data.stage || "progress");
+    const frag = document.createDocumentFragment();
+    const box = this.h("div", {
+      class: "progress-pane" + (stage === "failed" ? " prog-failed" : stage === "done" ? " prog-done" : ""),
+    });
+    box.appendChild(this.h("div", { class: "progress-title" },
+      stage === "failed" ? "更新失败" : stage === "done" ? "更新完成" : "正在更新"));
+    box.appendChild(this.h("div", { class: "progress-text" }, data.progressText || "正在处理…"));
+    const pct = typeof data.progress === "number" ? data.progress : -1;
+    box.appendChild(this.buildSegProgress(pct));
+    const row = this.h("div", { class: "progress-meta" });
+    row.appendChild(this.h("span", { class: "progress-pct" }, pct >= 0 ? Math.round(pct) + "%" : ""));
+    row.appendChild(this.h("span", { class: "progress-flex" }));
+    if (stage === "done" || stage === "failed") {
+      row.appendChild(this.h("button", { onClick: () => this.continueFromProgress() },
+        this.dialog.kind === "download" ? "返回" : "继续管理"));
+    }
+    row.appendChild(this.h("button", { onClick: () => this.closeDialog() }, "关闭"));
+    box.appendChild(row);
+    frag.appendChild(box);
+    return frag;
+  },
+
+  continueFromProgress() {
+    if (this.dialog.kind === "download") {
+      this.dialog.data = { ...this.dialog.data, stage: "form" };
+    } else {
+      this.dialog.data = { ...this.dialog.data, stage: "form" };
+    }
+    this.renderDialog();
+  },
+
+  // 98.css 风格分段蓝块进度条；pct<0 为流动的不确定态。
+  buildSegProgress(pct) {
+    const bar = this.h("div", { class: "seg-progress" + (pct < 0 ? " indeterminate" : "") });
+    const blocks = 24;
+    const lit = pct < 0 ? 0 : Math.max(0, Math.min(blocks, Math.round((pct / 100) * blocks)));
+    for (let i = 0; i < blocks; i++) {
+      const seg = document.createElement("span");
+      if (pct < 0) {
+        seg.style.animationDelay = (i * 0.08) + "s";
+      } else if (i >= lit) {
+        seg.classList.add("off");
+      }
+      bar.appendChild(seg);
+    }
+    return bar;
+  },
+
+  openDownloadDialog() {
+    this.dialog = {
+      kind: "download",
+      data: { stage: "form", url: "" },
+      formData: null,
+      busy: false,
+    };
+    this.renderDialog();
+  },
+
+  buildDownload() {
+    const data = this.dialog.data;
+    const stage = String(data.stage || "form");
+    if (["progress", "done", "failed"].includes(stage)) {
+      return this.buildProgressPane();
+    }
+    const frag = document.createDocumentFragment();
+    if (stage === "formats") {
+      const box = this.h("fieldset", {});
+      box.appendChild(this.h("legend", {}, "选择下载格式"));
+      (data.formats || []).forEach((fmt, i) => {
+        const line = this.h("label", { class: "download-option" });
+        const radio = this.h("input", {
+          type: "radio", name: "dlfmt", value: String(fmt.index),
+        });
+        if (i === 0) radio.checked = true;
+        line.appendChild(radio);
+        line.appendChild(this.h("span", {},
+          (fmt.hasAudio ? "♪ " : "视频 ") + fmt.label + "  [" + fmt.formatId + "]"));
+        box.appendChild(line);
+      });
+      frag.appendChild(box);
+      frag.appendChild(this.dialogError());
+      frag.appendChild(this.buttonRow([
+        { label: "开始下载", primary: true, onClick: () => this.submitDownload() },
+        { label: "关闭", onClick: () => this.closeDialog() },
+      ]));
+      return frag;
+    }
+    const box = this.h("fieldset", {});
+    box.appendChild(this.h("legend", {}, "视频下载"));
+    box.appendChild(this.formRow("视频地址",
+      this.h("input", {
+        type: "text", "data-field": "url", value: data.url || "",
+        placeholder: "YouTube 等视频页面链接",
+      })));
+    frag.appendChild(box);
+    frag.appendChild(this.dialogError());
+    frag.appendChild(this.buttonRow([
+      { label: "获取格式列表", primary: true, onClick: () => this.submitDownloadFormats() },
+      { label: "关闭", onClick: () => this.closeDialog() },
+    ]));
+    return frag;
+  },
+
+  submitDownloadFormats() {
+    if (this.dialog.busy) return;
+    const values = this.collectFormValues();
+    if (!values.url || !String(values.url).trim()) {
+      this.setInfo("请先粘贴视频地址");
+      return;
+    }
+    this.beginOp();
+    window.pywebview.api.listDownloadFormats(values.url.trim());
+  },
+
+  submitDownload() {
+    if (this.dialog.busy) return;
+    const checked = document.querySelector('#dlgBody input[name="dlfmt"]:checked');
+    if (!checked) {
+      this.setInfo("请选择一个下载格式");
+      return;
+    }
+    this.beginOp();
+    window.pywebview.api.startDownload(Number(checked.value));
+  },
+
   // ---------- 交互 ----------
 
   // ---------- P3：播放与右键菜单 ----------
@@ -804,6 +1137,14 @@ const zhibo = {
     document.getElementById("btnImport").addEventListener("click", () => {
       if (this.dialog.busy) return;
       this.openImportDialog();
+    });
+    document.getElementById("btnUpdate").addEventListener("click", () => {
+      if (this.dialog.busy) return;
+      window.pywebview.api.loadUpdateCenter();
+    });
+    document.getElementById("btnDownload").addEventListener("click", () => {
+      if (this.dialog.busy) return;
+      this.openDownloadDialog();
     });
     document.getElementById("btnProxy").addEventListener("click", () => {
       if (this.dialog.busy) return;
