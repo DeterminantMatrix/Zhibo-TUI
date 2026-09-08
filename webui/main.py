@@ -1,6 +1,7 @@
 """Web 前端入口 — pywebview 窗口 + pystray 托盘 + 单实例锁。"""
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from pathlib import Path
@@ -83,6 +84,13 @@ def main(argv: list[str] | None = None) -> int:
         # evaluate_js 只能在 GUI 启动后调用；推送与监控线程随 GUI 起动。
         pusher.start()
         service.start()
+
+    # 主题验证钩子：ZHIBO_WEB_THEME=dark 时启动即切暗色（走真实切换函数）。
+    env_theme = os.environ.get("ZHIBO_WEB_THEME", "").strip()
+    if env_theme in {"dark", "classic"}:
+        window.events.loaded += lambda: window.evaluate_js(
+            f"window.zhibo && window.zhibo.setTheme({env_theme!r})"
+        )
 
     webview.start(start_after_gui)
     pusher.stop()

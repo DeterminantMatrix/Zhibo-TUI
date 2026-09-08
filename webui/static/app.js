@@ -266,6 +266,10 @@ const zhibo = {
     document.getElementById("btnRefresh").addEventListener("click", () => {
       window.pywebview.api.refresh();
     });
+    const themeBtn = document.getElementById("btnTheme");
+    themeBtn.addEventListener("click", () => {
+      this.setTheme(document.body.classList.contains("theme-dark") ? "classic" : "dark");
+    });
     document.getElementById("searchBox").addEventListener("input", (e) => {
       this.search = e.target.value;
       this.renderRows();
@@ -347,10 +351,24 @@ const zhibo = {
     } catch (err) { /* 忽略损坏的本地存储 */ }
   },
 
+  setTheme(theme) {
+    const dark = theme === "dark";
+    document.body.classList.toggle("theme-dark", dark);
+    document.getElementById("btnTheme").textContent = dark ? "经典模式" : "暗色模式";
+    try { localStorage.setItem("zhibo.theme", theme); } catch (err) { /* 忽略 */ }
+  },
+
+  restoreTheme() {
+    let theme = "classic";
+    try { theme = localStorage.getItem("zhibo.theme") || "classic"; } catch (err) { /* 忽略 */ }
+    this.setTheme(theme);
+  },
+
   async boot() {
     this.wireWindowControls();
     this.wireControls();
     this.wireTable();
+    this.restoreTheme();
     this.restore();
     this.renderSortMarks();
     this.setInfo("等待监控核心…");
