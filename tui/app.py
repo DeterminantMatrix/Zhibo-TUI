@@ -5,6 +5,7 @@ UI 与监控服务同处一个 asyncio 循环；数据经 tui/backend.MonitorBri
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from rich.cells import cell_len
@@ -18,6 +19,13 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static, Tab, Tabs
 
 from tui.backend import MonitorBridge
+from tui.screens import (
+    ConfirmScreen,
+    EditScreen,
+    ImportScreen,
+    ProxyScreen,
+    SettingsScreen,
+)
 
 _TONE_STYLE = {
     "ok": "green",
@@ -49,8 +57,9 @@ class DetailScreen(ModalScreen):
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss_screen", "返回"),
-        Binding("d", "dismiss_screen", "返回", show=False),
+        Binding("escape", "dismiss_screen", "关闭"),
+        Binding("d", "dismiss_screen", "关闭", show=False),
+        Binding("e", "edit", "编辑"),
     ]
 
     CSS = """
@@ -79,14 +88,15 @@ class DetailScreen(ModalScreen):
 
     VALUE_CLIP = 64
 
-    def __init__(self, detail: dict) -> None:
+    def __init__(self, detail: dict, idx: int) -> None:
         super().__init__()
         self._detail = detail
+        self._idx = idx
 
     def compose(self) -> ComposeResult:
         with Vertical(id="detailBox"):
             yield DataTable(id="detailTable", show_cursor=False, zebra_stripes=True)
-            yield Static("按 Esc 返回；编辑功能将在后续阶段加入", id="detailHint")
+            yield Static("按 Esc 返回 · 按 e 进入编辑", id="detailHint")
 
     def on_mount(self) -> None:
         table = self.query_one("#detailTable", DataTable)
@@ -100,6 +110,10 @@ class DetailScreen(ModalScreen):
                 Text(row.get("label", ""), style="bold"),
                 Text(value, style=tone) if tone else Text(value),
             )
+
+    def action_edit(self) -> None:
+        self.dismiss()
+        self.app.open_edit(self._idx)
 
     @staticmethod
     def _clip(text: str, limit: int) -> str:
@@ -190,9 +204,15 @@ class ZhiboTui(App):
         Binding("enter", "play", "播放"),
         Binding("x", "stop_player", "停止", show=False),
         Binding("d", "detail", "详情"),
+        Binding("e", "edit", "编辑"),
         Binding("c", "copy_stream", "复制流", show=False),
         Binding("o", "open_web", "网页", show=False),
         Binding("space", "toggle_enabled", "停用/恢复"),
+        Binding("delete", "delete_row", "删除", show=False),
+        Binding("s", "settings", "设置"),
+        Binding("p", "proxy", "代理"),
+        Binding("i", "import_room", "导入"),
+        Binding("n", "toggle_notifications", "通知", show=False),
         Binding("l", "toggle_log", "日志"),
         Binding("r", "refresh", "刷新"),
         Binding("t", "cycle_theme", "主题", show=False),
@@ -403,11 +423,24 @@ class ZhiboTui(App):
 
     # ---- 交互动作 ---------------------------------------------------------
 
+    def _modal_open(self) -> bool:
+        """弹层打开时屏蔽主界面动作（q/空格等全局键不该穿透）。"""
+        return len(self.screen_stack) > 1
+
     def action_focus_search(self) -> None:
         self.query_one("#search", Input).focus()
 
+    def action_play(self) -> None:
+        if self._modal_open():
+            return
+        idx = self._selected_idx()
+        if idx is not None and self._bridge is not None:
+            self._bridge.play(idx)
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """表格内按 Enter 触发行选中 = 播放。"""
+        if self._modal_open():
+            return
         row_key = event.row_key
         if (
             row_key is not None
@@ -416,34 +449,101 @@ class ZhiboTui(App):
         ):
             self._bridge.play(row_key.value)
 
-    def action_play(self) -> None:
-        idx = self._selected_idx()
-        if idx is not None and self._bridge is not None:
-            self._bridge.play(idx)
-
     def action_stop_player(self) -> None:
         if self._bridge is not None:
             self._bridge.stop_player()
 
     def action_detail(self) -> None:
+        if self._modal_open():
+            return
         idx = self._selected_idx()
         if idx is None or self._bridge is None:
             return
         detail = self._bridge.get_detail(idx)
         if detail is not None:
-            self.push_screen(DetailScreen(detail))
+            self.push_screen(DetailScreen(detail, idx=idx))
+
+    def action_edit(self) -> None:
+        if self._modal_open():
+            return
+        idx = self._selected_idx()
+        if idx is not None:
+            self.open_edit(idx)
+
+    def open_edit(self, idx: int) -> None:
+        if self._bridge is None:
+            return
+        payload = self._bridge.get_edit_payload(idx)
+        if payload is None:
+            self.log_line("选中的直播间已不存在")
+            return
+        self.push_screen(EditScreen(self._bridge, payload))
+
+    def action_settings(self) -> None:
+        if self._modal_open() or self._bridge is None:
+            return
+
+        async def open_settings() -> None:
+            values = await self._bridge.get_settings()
+            self.push_screen(SettingsScreen(self._bridge, values))
+
+        asyncio.create_task(open_settings())
+
+    def action_proxy(self) -> None:
+        if self._modal_open() or self._bridge is None:
+            return
+
+        async def open_proxy() -> None:
+            values = await self._bridge.get_proxy()
+            self.push_screen(ProxyScreen(self._bridge, values))
+
+        asyncio.create_task(open_proxy())
+
+    def action_import_room(self) -> None:
+        if self._modal_open():
+            return
+        self.push_screen(ImportScreen(self._bridge))
+
+    def action_delete_row(self) -> None:
+        if self._modal_open() or self._bridge is None:
+            return
+        idx = self._selected_idx()
+        if idx is None:
+            return
+
+        async def flow() -> None:
+            ok, text = await self._bridge.preview_delete(idx)
+            if not ok:
+                self.log_line(text)
+                return
+            self.push_screen(
+                ConfirmScreen("确认删除直播间？", text, "确认删除", self._bridge.confirm_delete)
+            )
+
+        asyncio.create_task(flow())
+
+    def action_toggle_notifications(self) -> None:
+        if self._modal_open() or self._bridge is None:
+            return
+        self._bridge.toggle_notifications()
 
     def action_copy_stream(self) -> None:
+        if self._modal_open():
+            return
         idx = self._selected_idx()
         if idx is not None and self._bridge is not None:
             self._bridge.copy_stream(idx)
 
     def action_open_web(self) -> None:
+        if self._modal_open():
+            return
         idx = self._selected_idx()
         if idx is not None and self._bridge is not None:
             self._bridge.open_web(idx)
 
     def action_toggle_enabled(self) -> None:
+        if self._modal_open():
+            return
         idx = self._selected_idx()
         if idx is not None and self._bridge is not None:
             self._bridge.toggle_enabled(idx)
@@ -461,16 +561,27 @@ class ZhiboTui(App):
             self._bridge.player_control("toggle_mute")
 
     def action_toggle_log(self) -> None:
+        if self._modal_open():
+            return
         log = self.query_one("#log", RichLog)
         log.display = not log.display
 
     def action_refresh(self) -> None:
+        if self._modal_open():
+            return
         if self._bridge is not None:
             self._bridge.refresh()
 
     def action_cycle_theme(self) -> None:
+        if self._modal_open():
+            return
         self._theme_index = (self._theme_index + 1) % len(self.THEMES)
         self.theme = self.THEMES[self._theme_index]
+
+    def action_quit(self) -> None:
+        if self._modal_open():
+            return
+        self.exit()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search":

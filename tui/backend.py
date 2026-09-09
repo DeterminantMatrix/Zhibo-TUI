@@ -9,18 +9,102 @@ from __future__ import annotations
 import asyncio
 import copy
 import datetime
+import json
 import subprocess
 import webbrowser
 
-from zhibo.app_logging import redact_sensitive_text
-from zhibo.config import follower_key
+from zhibo.app_logging import redact_sensitive_mapping, redact_sensitive_text
+from zhibo.config import (
+    follower_key,
+    follower_to_edit_payload,
+    preview_follower_edit,
+)
 from zhibo.detail import build_detail_view
 from zhibo.desktop import mpv_command, new_mpv_ipc_path, play_url
+from zhibo.import_preview import ImportPreviewService
 from zhibo.monitor import FollowerStatus, MonitorService, StatusHistoryEntry
+from zhibo.plugins import list_plugins
 from zhibo.plugins.base import stream_candidate_urls
 from zhibo.plugins.bounded_executor import shutdown_plugin_workers
-from zhibo.proxy_config import proxy_for_platform
+from zhibo.proxy_config import (
+    PROXY_PLATFORMS,
+    normalize_proxy_value,
+    proxy_for_platform,
+    set_platform_proxies,
+)
+from zhibo.quality_options import normalize_quality_choice, quality_for_plugin, quality_options
 from zhibo.viewmodel import sort_snapshots, status_snapshot, web_url_for_snapshot
+
+
+# ---- 事务确认页的纯展示格式化（自 webui/Qt 移植；value 一律先脱敏） ------
+
+EDIT_LABELS = {
+    "enabled": "启用",
+    "name": "名称",
+    "tags": "标签",
+    "plugin": "主插件",
+    "fallback_plugins": "备用插件",
+    "platform": "平台",
+    "url": "直播间地址",
+    "quality": "画质",
+    "sport_id": "sport_id",
+    "extra": "扩展字段",
+}
+
+SETTINGS_LABELS = {
+    "poll_interval": "轮询间隔（秒）",
+    "max_concurrent_checks": "最大并发检测",
+    "failure_backoff_after": "失败后退避阈值",
+    "failure_backoff_polls": "退避轮数",
+    "notifications_enabled": "桌面通知",
+}
+
+
+def _display_value(value) -> str:
+    safe = redact_sensitive_mapping(value)
+    if isinstance(safe, bool):
+        return "true" if safe else "false"
+    if isinstance(safe, (dict, list, tuple)):
+        import json
+
+        return json.dumps(safe, ensure_ascii=False, sort_keys=True)
+    return redact_sensitive_text(str(safe))
+
+
+def _format_changes(title: str, changes: dict, labels: dict) -> str:
+    if not changes:
+        return "没有检测到实质变化。"
+    lines = [title]
+    for field, pair in changes.items():
+        before, after = pair
+        lines.append(f"{labels.get(field, field)}：{_display_value(before)} → {_display_value(after)}")
+    lines.extend(("", "确认后会重新核对磁盘配置并以原子方式写入。"))
+    return "\n".join(lines)
+
+
+def _format_import_preview(preview) -> str:
+    from zhibo.app_logging import redact_sensitive_text as _rst
+
+    lines = ["导入预览（尚未写入配置）"]
+    follower = preview.follower
+    if follower is not None:
+        lines.extend(
+            (
+                f"名称：{_rst(follower.name)}",
+                f"平台：{_rst(follower.platform or '-')}",
+                f"插件：{_rst(follower.plugin)}",
+                f"备用插件：{_rst(', '.join(follower.fallback_plugins) or '-')}",
+                f"标签：{_rst(', '.join(follower.tags) or '未分类')}",
+                f"地址：{_rst(follower.url)}",
+                f"画质：{_rst(follower.quality or 'best')}",
+            )
+        )
+    if preview.messages:
+        lines.append("")
+        lines.extend(f"注意：{_rst(message)}" for message in preview.messages)
+    elif follower is not None:
+        lines.extend(("", "校验通过；确认后才会写入 followers.csv。"))
+    return "\n".join(lines)
 
 
 class MonitorBridge:
@@ -46,6 +130,7 @@ class MonitorBridge:
         self._player_payload: dict = {}
         self._playing_idx = -1
         self._poll_round = 0
+        self._pending: dict = {}
 
     # ---- 生命周期 -------------------------------------------------------
 
@@ -414,3 +499,402 @@ class MonitorBridge:
                 for row in detail.rows
             ],
         }
+
+    # ---- 详情（同步纯函数，直接返回） -----------------------------------
+
+    def get_detail(self, follower_index: int) -> dict | None:
+        service = self.service
+        if service is None:
+            return None
+        status = service.followers.get(follower_index)
+        if status is None:
+            return None
+        detail = build_detail_view(
+            status, service.get_platform_health(status.follower.platform)
+        )
+        return {
+            "title": detail.title,
+            "rows": [
+                {"label": row.label, "value": row.value, "tone": row.tone}
+                for row in detail.rows
+            ],
+        }
+
+    # ---- P2 事务：编辑 ---------------------------------------------------
+
+    def get_edit_payload(self, follower_index: int) -> dict | None:
+        """详情+编辑合一的表单初值（已脱敏）。"""
+        service = self.service
+        if service is None:
+            return None
+        status = service.followers.get(follower_index)
+        if status is None:
+            return None
+        form = follower_to_edit_payload(status.follower, redact=True)
+        plugin = str(form.get("plugin", ""))
+        platform = str(form.get("platform", ""))
+        quality = str(form.get("quality", "best"))
+        return {
+            "idx": follower_index,
+            "name": status.follower.name,
+            "form": {
+                "enabled": "true" if form.get("enabled", True) else "false",
+                "name": form.get("name", ""),
+                "tags": "|".join(form.get("tags", [])),
+                "plugin": plugin,
+                "fallback_plugins": "|".join(form.get("fallback_plugins", [])),
+                "platform": platform,
+                "url": form.get("url", ""),
+                "quality": quality,
+                "sport_id": form.get("sport_id", ""),
+                "extra": json.dumps(
+                    form.get("extra", {}), ensure_ascii=False, sort_keys=True, indent=2
+                ),
+            },
+            "pluginOptions": list_plugins(),
+            "qualityOptions": [
+                {"label": label, "value": value}
+                for label, value in quality_options(plugin, platform, quality)
+            ],
+        }
+
+    async def preview_edit(self, follower_index: int, values: dict) -> tuple[bool, str]:
+        """校验表单并生成脱敏差异文本；成功后暂存待确认。"""
+        try:
+            service = self._require()
+            status = service.followers.get(follower_index)
+            if status is None or status.is_checking:
+                raise ValueError("编辑目标已变化或正在检测，请重新打开编辑器")
+            candidate_values = dict(values)
+            old_plugin = status.follower.plugin
+            new_plugin = str(candidate_values.get("plugin", old_plugin) or old_plugin).strip()
+            new_platform = str(
+                candidate_values.get("platform", status.follower.platform)
+                or status.follower.platform
+            ).strip()
+            requested_quality = str(
+                candidate_values.get("quality", status.follower.quality) or "best"
+            ).strip()
+            if new_plugin.casefold() != old_plugin.casefold():
+                if requested_quality.casefold() == (status.follower.quality or "best").casefold():
+                    candidate_values["quality"] = quality_for_plugin(
+                        status.follower.quality,
+                        source_plugin=old_plugin,
+                        target_plugin=new_plugin,
+                        platform=new_platform,
+                    )
+                else:
+                    candidate_values["quality"] = normalize_quality_choice(
+                        new_plugin, new_platform, requested_quality
+                    )
+            preview = preview_follower_edit(
+                status.follower,
+                candidate_values,
+                existing_followers=service.cfg.followers,
+                editing_index=follower_index,
+            )
+            if not preview.has_changes:
+                raise ValueError("配置没有实质变化")
+            self._pending["edit"] = {
+                "index": follower_index,
+                "expected_key": follower_key(status.follower),
+                "expected_follower": copy.deepcopy(status.follower),
+                "preview": preview,
+            }
+            return True, _format_changes("配置修改预览（尚未保存）", preview.changes, EDIT_LABELS)
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    async def confirm_edit(self) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            pending = self._pending.pop("edit", None)
+            if not pending:
+                raise ValueError("编辑预览已失效，请重新操作")
+            index = pending["index"]
+            status = service.followers.get(index)
+            if status is None or status.is_checking:
+                raise ValueError("编辑目标已变化或正在检测，未写入配置")
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_follower,
+                index,
+                pending["preview"].follower,
+                expected_key=pending["expected_key"],
+                expected_follower=pending["expected_follower"],
+            )
+            updated = persisted.follower
+            old = status.follower
+            if index < len(service.cfg.followers):
+                service.cfg.followers[index] = updated
+            if follower_key(old) != follower_key(updated) or old.enabled != updated.enabled:
+                replacement = FollowerStatus(
+                    follower=updated,
+                    check_state="disabled" if not updated.enabled else "unknown",
+                )
+                if not updated.enabled:
+                    replacement.history.append(
+                        StatusHistoryEntry(
+                            at=datetime.datetime.now(),
+                            state="disabled",
+                            message="配置编辑后已禁用",
+                            is_live=False,
+                        )
+                    )
+                service.followers[index] = replacement
+            else:
+                status.follower = updated
+            service.get_platform_health(updated.platform)
+            self._emit_snapshot()
+            return True, f"已保存 {updated.name} 的配置修改"
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    # ---- P2 事务：监控设置 ------------------------------------------------
+
+    async def get_settings(self) -> dict:
+        service = self._require()
+        settings = service.config_manager.read_monitoring_settings()
+        return {
+            key: ("true" if value is True else "false" if value is False else str(value))
+            for key, value in settings.items()
+        }
+
+    async def preview_settings(self, values: dict) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            before = service.config_manager.read_monitoring_settings()
+            preview = service.config_manager.preview_monitoring_settings(values)
+            if not preview.has_changes:
+                raise ValueError("监控设置没有实质变化")
+            self._pending["settings"] = {"before": before, "preview": preview}
+            return True, _format_changes(
+                "监控设置预览（尚未保存）", preview.changes, SETTINGS_LABELS
+            )
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    async def confirm_settings(self) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            pending = self._pending.pop("settings", None)
+            if not pending:
+                raise ValueError("设置预览已失效，请重新操作")
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_monitoring_settings,
+                pending["preview"].settings,
+                expected_settings=pending["before"],
+            )
+            for field, value in persisted.settings.items():
+                setattr(service.cfg, field, value)
+            service.apply_monitoring_settings()
+            self._emit_snapshot()
+            return True, "监控设置已保存并立即生效"
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    # ---- P2 事务：平台代理 ------------------------------------------------
+
+    async def get_proxy(self) -> dict:
+        service = self._require()
+        payload = {
+            platform: service.cfg.platform_proxies.get(platform, "")
+            for platform in sorted(PROXY_PLATFORMS)
+        }
+        return payload
+
+    async def save_proxy(self, values: dict) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            proxies = {
+                platform: str(values.get(platform, "")).strip()
+                for platform in PROXY_PLATFORMS
+                if str(values.get(platform, "")).strip()
+            }
+            candidate = copy.deepcopy(service.cfg)
+            candidate.platform_proxies = proxies
+            await asyncio.to_thread(service.config_manager.save_config, candidate)
+            service.cfg.platform_proxies = dict(proxies)
+            set_platform_proxies(proxies)
+            description = ", ".join(f"{key}={value}" for key, value in sorted(proxies.items()))
+            return True, f"平台代理设置已保存：{description or '使用默认规则'}"
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    async def test_proxy(self, values: dict) -> list[dict]:
+        normalized = {
+            platform: str(values.get(platform, "")).strip()
+            for platform in sorted(PROXY_PLATFORMS)
+        }
+        results = await asyncio.gather(*(
+            self._test_proxy_endpoint(platform, normalized[platform])
+            for platform in sorted(PROXY_PLATFORMS)
+        ))
+        return list(results)
+
+    @staticmethod
+    async def _test_proxy_endpoint(platform: str, raw_value: str) -> dict:
+        explicit = raw_value.strip()
+        proxy_url = normalize_proxy_value(explicit) if explicit else proxy_for_platform(platform)
+        if proxy_url is None:
+            return {"platform": platform, "status": "direct", "label": "直连", "detail": "该平台不会经过代理"}
+        from urllib.parse import urlparse
+
+        parsed = urlparse(proxy_url)
+        host = parsed.hostname
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            port = None
+        if not host or port is None:
+            return {
+                "platform": platform,
+                "status": "error",
+                "label": "地址无效",
+                "detail": "请填写端口、主机:端口或完整代理 URL",
+            }
+        try:
+            _reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port), timeout=2.5
+            )
+            writer.close()
+            await writer.wait_closed()
+        except (OSError, asyncio.TimeoutError) as exc:
+            return {
+                "platform": platform,
+                "status": "error",
+                "label": "不可连接",
+                "detail": f"{host}:{port} 未响应（{redact_sensitive_text(str(exc))}）",
+            }
+        source = "自定义" if explicit else "默认"
+        return {
+            "platform": platform,
+            "status": "ok",
+            "label": "代理可连接",
+            "detail": f"{source}代理 {host}:{port}",
+        }
+
+    # ---- P2 事务：导入 ----------------------------------------------------
+
+    async def get_import_preview(self, url: str, tag: str) -> tuple[bool, dict | str]:
+        try:
+            service = self._require()
+            preview = await ImportPreviewService(service.config_manager).preview(
+                str(url or ""), str(tag or "")
+            )
+            self._pending.pop("import", None)
+            if preview.can_confirm:
+                self._pending["import"] = preview
+            return True, {
+                "previewText": _format_import_preview(preview),
+                "canConfirm": preview.can_confirm,
+                "requiresOverride": preview.requires_conflict_override,
+                "confirmLabel": "确认冲突后导入" if preview.requires_conflict_override else "确认导入",
+            }
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    async def confirm_import(self) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            preview = self._pending.pop("import", None)
+            if preview is None:
+                raise ValueError("导入预览已失效，请重新操作")
+            follower = await asyncio.to_thread(
+                ImportPreviewService(service.config_manager).confirm,
+                preview,
+                confirmed=True,
+                allow_conflicts=preview.requires_conflict_override,
+            )
+            index = len(service.cfg.followers)
+            service.cfg.followers.append(follower)
+            service.followers[index] = FollowerStatus(
+                follower=follower,
+                check_state="disabled" if not follower.enabled else "unknown",
+            )
+            service.get_platform_health(follower.platform)
+            self._emit_snapshot()
+            return True, f"已导入 {follower.name}"
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    # ---- P2 事务：删除 ----------------------------------------------------
+
+    async def preview_delete(self, follower_index: int) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            self._ensure_delete_is_idle(service)
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的直播间已不存在")
+            if len(service.cfg.followers) <= 1:
+                raise ValueError("至少需要保留一个直播间，无法删除最后一项")
+            follower = status.follower
+            self._pending["delete"] = {
+                "index": follower_index,
+                "expected_key": follower_key(follower),
+                "expected_follower": copy.deepcopy(follower),
+            }
+            tags = "、".join(follower.tags) or "无标签"
+            text = (
+                "即将永久删除这个直播间：\n\n"
+                f"名称：{follower.name}\n"
+                f"平台：{follower.platform}\n"
+                f"标签：{tags}\n\n"
+                "删除后会立即写入关注列表，此操作不能在程序内撤销。"
+            )
+            return True, text
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    def _ensure_delete_is_idle(self, service: MonitorService) -> None:
+        if service.is_polling or any(status.is_checking for status in service.followers.values()):
+            raise ValueError("状态检测进行中，请等待本轮完成后再删除")
+        if any(not task.done() for task in service._stream_deadline_tasks.values()):
+            raise ValueError("正在获取直播流，请稍后再删除")
+
+    async def confirm_delete(self) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            pending = self._pending.pop("delete", None)
+            if not pending:
+                raise ValueError("删除确认已失效，请重新选择直播间")
+            self._ensure_delete_is_idle(service)
+            index = pending["index"]
+            removed = await asyncio.to_thread(
+                service.config_manager.remove_follower,
+                index,
+                expected_key=pending["expected_key"],
+                expected_follower=pending["expected_follower"],
+            )
+            service.cfg.followers.pop(index)
+            service.followers = {
+                old_index if old_index < index else old_index - 1: status
+                for old_index, status in service.followers.items()
+                if old_index != index
+            }
+            self._pending.pop("edit", None)
+            if self._playing_idx == index:
+                await self._stop_player()
+            self._emit_snapshot()
+            return True, f"已删除直播间：{removed.name}"
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))
+
+    # ---- P2 事务：通知开关 ------------------------------------------------
+
+    def toggle_notifications(self) -> None:
+        self._spawn(self._toggle_notifications_impl())
+
+    async def _toggle_notifications_impl(self) -> tuple[bool, str]:
+        try:
+            service = self._require()
+            candidate = copy.deepcopy(service.cfg)
+            candidate.notifications_enabled = not service.cfg.notifications_enabled
+            await asyncio.to_thread(service.config_manager.save_config, candidate)
+            service.cfg.notifications_enabled = candidate.notifications_enabled
+            state = "开启" if candidate.notifications_enabled else "关闭"
+            self._log(f"桌面通知已{state}")
+            self._emit_snapshot()
+            return True, f"桌面通知已{state}"
+        except Exception as exc:
+            return False, redact_sensitive_text(str(exc))

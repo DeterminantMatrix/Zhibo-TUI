@@ -85,6 +85,80 @@ class FakeBridge:
             "rows": [{"label": "状态", "value": "直播中", "tone": "ok"}],
         }
 
+    # ---- P2 事务（假实现，记录调用） ----
+
+    def get_edit_payload(self, idx: int) -> dict:
+        return {
+            "idx": idx,
+            "name": "夜色",
+            "form": {
+                "enabled": "true", "name": "夜色", "tags": "游戏|LOL",
+                "plugin": "streamlink", "fallback_plugins": "", "platform": "douyu",
+                "url": "https://douyu.com/1", "quality": "best", "sport_id": "",
+                "extra": "{}",
+            },
+            "pluginOptions": ["streamlink"],
+            "qualityOptions": [{"label": "best", "value": "best"}],
+        }
+
+    async def preview_edit(self, idx, values):
+        self.edit_previewed = (idx, values)
+        return True, "配置修改预览（尚未保存）\n名称：夜色 → 夜色改"
+
+    async def confirm_edit(self):
+        self.edit_confirmed = True
+        return True, "已保存 夜色 的配置修改"
+
+    async def get_settings(self):
+        return {
+            "poll_interval": "240", "max_concurrent_checks": "8",
+            "failure_backoff_after": "3", "failure_backoff_polls": "2",
+            "notifications_enabled": "true",
+        }
+
+    async def preview_settings(self, values):
+        self.settings_previewed = values
+        return True, "监控设置预览（尚未保存）\n轮询间隔（秒）：240 → 60"
+
+    async def confirm_settings(self):
+        self.settings_confirmed = True
+        return True, "监控设置已保存并立即生效"
+
+    async def get_proxy(self):
+        return {"twitch": "", "youtube": ""}
+
+    async def test_proxy(self, values):
+        self.proxy_tested = values
+        return [{"platform": "twitch", "status": "direct", "label": "直连", "detail": "该平台不会经过代理"}]
+
+    async def save_proxy(self, values):
+        self.proxy_saved = values
+        return True, "平台代理设置已保存"
+
+    async def get_import_preview(self, url, tag):
+        self.import_previewed = (url, tag)
+        return True, {
+            "previewText": "导入预览（尚未写入配置）",
+            "canConfirm": True,
+            "requiresOverride": False,
+            "confirmLabel": "确认导入",
+        }
+
+    async def confirm_import(self):
+        self.imported = True
+        return True, "已导入 新主播"
+
+    async def preview_delete(self, idx):
+        return True, "即将永久删除这个直播间"
+
+    async def confirm_delete(self):
+        self.deleted = True
+        return True, "已删除直播间：夜色"
+
+    def toggle_notifications(self):
+        self.notifications_toggled = True
+        return True, "桌面通知已关闭"
+
 
 @pytest.mark.asyncio
 async def test_tui_renders_snapshot_and_bindings():
@@ -167,3 +241,102 @@ async def test_tui_tag_filter_and_lifecycle():
         assert bridge.toggled == [0]
     # 退出时桥被停止。
     assert bridge.stopped
+
+
+@pytest.mark.asyncio
+async def test_tui_edit_transaction_flow():
+    from textual.widgets import Button
+
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+        table = app.query_one("#streamTable", DataTable)
+        table.focus()
+        await pilot.press("e")
+        await pilot.pause()
+        # 弹出了编辑表单。
+        assert len(app.screen_stack) == 2
+
+        # 修改名称并保存 → 进入差异确认页。
+        app.screen._fields["name"].value = "夜色改"
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause()
+        assert bridge.edit_previewed[0] == 0
+        assert len(app.screen_stack) == 3
+
+        # 确认保存 → 两层弹层都关闭。
+        app.screen.query_one("#confirm", Button).press()
+        await pilot.pause()
+        assert bridge.edit_confirmed
+        assert len(app.screen_stack) == 1
+
+        # 弹层打开期间 q 不应退出应用。
+        await pilot.press("e")
+        await pilot.pause()
+        await pilot.press("q")
+        await pilot.pause()
+        assert len(app.screen_stack) == 2
+        assert bridge.stopped is False
+
+
+@pytest.mark.asyncio
+async def test_tui_settings_proxy_import_delete_flows():
+    from textual.widgets import Button, Input
+
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+
+        # 设置事务。
+        await pilot.press("s")
+        await pilot.pause()
+        await pilot.pause()
+        assert len(app.screen_stack) == 2
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause()
+        assert len(app.screen_stack) == 3
+        app.screen.query_one("#confirm", Button).press()
+        await pilot.pause()
+        assert bridge.settings_confirmed
+        assert len(app.screen_stack) == 1
+
+        # 代理：测试 + 保存。
+        await pilot.press("p")
+        await pilot.pause()
+        await pilot.pause()
+        app.screen.query_one("#test", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause()
+        assert bridge.proxy_saved is not None
+        assert len(app.screen_stack) == 1
+
+        # 导入：预览 → 确认。
+        await pilot.press("i")
+        await pilot.pause()
+        app.screen.query_one(Input).value = "https://www.twitch.tv/example"
+        app.screen.query_one("#preview", Button).press()
+        await pilot.pause()
+        confirm_btn = app.screen.query_one("#confirm", Button)
+        assert confirm_btn.disabled is False
+        confirm_btn.press()
+        await pilot.pause()
+        assert bridge.imported
+        assert len(app.screen_stack) == 1
+
+        # 删除事务。
+        table = app.query_one("#streamTable", DataTable)
+        table.focus()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert len(app.screen_stack) == 2
+        app.screen.query_one("#confirm", Button).press()
+        await pilot.pause()
+        assert bridge.deleted
+
+        # 通知开关。
+        await pilot.press("n")
+        await pilot.pause()
+        assert bridge.notifications_toggled
