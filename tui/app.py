@@ -273,6 +273,7 @@ class ZhiboTui(App):
         Binding("u", "updates", "更新"),
         Binding("w", "download", "下载"),
         Binding("r", "refresh", "刷新"),
+        Binding("h", "hide_to_tray", "托盘", show=False),
         Binding("l", "toggle_log", "日志"),
         Binding("q", "quit", "退出"),
         Binding("/", "focus_search", "搜索", show=False),
@@ -330,6 +331,7 @@ class ZhiboTui(App):
             yield Button("下载", id="abDownload")
             yield Button("日志", id="abLog")
             yield Button("刷新", id="abRefresh")
+            yield Button("托盘", id="abTray")
             yield Button("退出", id="abQuit")
             yield Static("", id="abSpacer")
             yield Button("导入", id="abImport", classes="corner")
@@ -513,6 +515,7 @@ class ZhiboTui(App):
         "abDownload": "action_download",
         "abLog": "action_toggle_log",
         "abRefresh": "action_refresh",
+        "abTray": "action_hide_to_tray",
         "abQuit": "action_quit",
         "abImport": "action_import_room",
     }
@@ -733,6 +736,18 @@ class ZhiboTui(App):
             return
         if self._bridge is not None:
             self._bridge.refresh()
+
+    def action_hide_to_tray(self) -> None:
+        from tui.tray import hide_console
+
+        self.log_line("已隐藏到托盘；监控继续运行，点击托盘图标恢复")
+        hide_console()
+
+    async def shutdown_from_tray(self) -> None:
+        """托盘线程经 call_from_thread 调用：先优雅停止监控再退出。"""
+        if self._bridge is not None:
+            await self._bridge.stop()
+        self.exit()
 
     def action_cycle_theme(self) -> None:
         if self._modal_open():
