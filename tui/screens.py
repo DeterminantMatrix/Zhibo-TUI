@@ -129,6 +129,14 @@ class ModalBase(ModalScreen):
             error.update("")
             error.remove_class("show")
 
+    def _pick_plugin(self, value: str) -> None:
+        self._plugin_value = value
+        self._plugin_btn.label = value or "-"
+
+    def _pick_quality(self, value: str) -> None:
+        self._quality_value = value
+        self._quality_btn.label = value or "-"
+
 
 class ConfirmScreen(ModalBase):
     """通用差异确认页：确认 / 返回 / 关闭。"""
@@ -186,6 +194,87 @@ class ConfirmScreen(ModalBase):
             self.dismiss()
 
 
+
+
+class PickScreen(ModalBase):
+    """紧凑选项挑选弹层 — 替代 Select 的下拉展示。"""
+
+    CSS = """
+    PickScreen {
+        align: center middle;
+        background: $background 60%;
+    }
+    #pickTitle {
+        margin-bottom: 1;
+        text-style: bold;
+    }
+    #pickList {
+        width: 44;
+        max-height: 70%;
+        border: round $accent;
+        background: $surface;
+    }
+    """
+
+    def __init__(self, title: str, options: list[tuple[str, str]], current: str, on_pick) -> None:
+        super().__init__()
+        self._title = title
+        self._options = options
+        self._current = current
+        self._on_pick = on_pick
+
+    def compose(self) -> ComposeResult:
+        yield Static(self._title, id="pickTitle")
+        yield OptionList(id="pickList")
+
+    def on_mount(self) -> None:
+        option_list = self.query_one("#pickList", OptionList)
+        for i, (label, value) in enumerate(self._options):
+            option_list.add_option(Option(label, id=f"opt-{i}"))
+        for i, (label, value) in enumerate(self._options):
+            if value == self._current:
+                option_list.highlighted = i
+                break
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        index = event.option_list.highlighted
+        if index is None:
+            return
+        label, value = self._options[index]
+        self.dismiss()
+        if self._on_pick is not None:
+            self._on_pick(value)
+
+
+class CycleButton(Button):
+    """二态循环按钮：点击在选项间切换，用于 启用/通知 这类布尔字段。"""
+
+    def __init__(self, options: list[tuple[str, str]], current: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._options = options
+        self.value = current
+        self._sync_label()
+
+    def _sync_label(self) -> None:
+        for label, value in self._options:
+            if value == self.value:
+                self.label = label
+                return
+
+    def cycle(self) -> str:
+        index = next(
+            (i for i, (_l, v) in enumerate(self._options) if v == self.value), 0
+        )
+        self.value = self._options[(index + 1) % len(self._options)][1]
+        self._sync_label()
+        return self.value
+
+
+def make_cycle_button(options: list[tuple[str, str]], current: str, button_id: str) -> CycleButton:
+    return CycleButton(options, current, id=button_id)
+
+
+
 class EditScreen(ModalBase):
     """详情与修改：表单 → 差异确认 → 原子保存。"""
 
@@ -206,13 +295,12 @@ class EditScreen(ModalBase):
             )
             with Horizontal(classes="form-row"):
                 yield Static("启用", classes="form-label")
-                enabled = Select(
+                self._enabled = make_cycle_button(
                     [("启用监控", "true"), ("停用监控", "false")],
-                    value=str(form.get("enabled", "true")),
-                    allow_blank=False,
+                    str(form.get("enabled", "true")),
+                    "enabledCycle",
                 )
-                self._fields["enabled"] = enabled
-                yield enabled
+                yield self._enabled
             with Horizontal(classes="form-row"):
                 yield Static("名称", classes="form-label")
                 name = Input(value=str(form.get("name", "")))
@@ -225,13 +313,9 @@ class EditScreen(ModalBase):
                 yield tags
             with Horizontal(classes="form-row"):
                 yield Static("主插件", classes="form-label")
-                current = str(form.get("plugin", ""))
-                options = [(p, p) for p in plugins]
-                if current and current not in plugins:
-                    options.insert(0, (current, current))
-                select = Select(options, value=current or None, allow_blank=False)
-                self._fields["plugin"] = select
-                yield select
+                self._plugin_value = str(form.get("plugin", ""))
+                self._plugin_btn = Button(self._plugin_value or "-", id="pluginPick")
+                yield self._plugin_btn
             with Horizontal(classes="form-row"):
                 yield Static("备用插件", classes="form-label")
                 fallback = Input(
@@ -255,11 +339,9 @@ class EditScreen(ModalBase):
                 q_options = [(q["label"], q["value"]) for q in qualities]
                 if cur_q and all(q["value"] != cur_q for q in qualities):
                     q_options.insert(0, (cur_q, cur_q))
-                quality = Select(
-                    q_options, value=cur_q or None, allow_blank=False
-                )
-                self._fields["quality"] = quality
-                yield quality
+                self._quality_value = cur_q
+                self._quality_btn = Button(cur_q or "-", id="qualityPick")
+                yield self._quality_btn
             with Horizontal(classes="form-row"):
                 yield Static("sport_id", classes="form-label")
                 sport = Input(value=str(form.get("sport_id", "")))
@@ -280,12 +362,31 @@ class EditScreen(ModalBase):
             if len(self.app.screen_stack) > 1:
                 self.dismiss()
             return
+        if event.button.id == "pluginPick":
+            options = [(p, p) for p in self._payload["pluginOptions"]]
+            if self._plugin_value and all(v != self._plugin_value for _l, v in options):
+                options.insert(0, (self._plugin_value, self._plugin_value))
+            self.app.push_screen(
+                PickScreen("选择主插件", options, self._plugin_value, self._pick_plugin)
+            )
+            return
+        if event.button.id == "qualityPick":
+            options = [(q["label"], q["value"]) for q in self._payload["qualityOptions"]]
+            if self._quality_value and all(v != self._quality_value for _l, v in options):
+                options.insert(0, (self._quality_value, self._quality_value))
+            self.app.push_screen(
+                PickScreen("选择画质", options, self._quality_value, self._pick_quality)
+            )
+            return
         if event.button.id != "save" or self._busy:
             return
         values = {
             name: (widget.text if isinstance(widget, TextArea) else widget.value)
             for name, widget in self._fields.items()
         }
+        values["enabled"] = self._enabled.value
+        values["plugin"] = self._plugin_value
+        values["quality"] = self._quality_value
         self._busy = True
         self._set_error("")
         ok, result = await self._bridge.preview_edit(self._payload["idx"], values)
@@ -335,13 +436,10 @@ class SettingsScreen(ModalBase):
             with Horizontal(classes="form-row"):
                 yield Static("桌面通知", classes="form-label")
                 current = str(self._values.get("notifications_enabled", "true"))
-                select = Select(
-                    [("开启", "true"), ("关闭", "false")],
-                    value=current,
-                    allow_blank=False,
+                self._notif = make_cycle_button(
+                    [("开启", "true"), ("关闭", "false")], current, "notifCycle"
                 )
-                self._fields["notifications_enabled"] = select
-                yield select
+                yield self._notif
             yield Static("", classes="form-error")
             with Horizontal(classes="button-row"):
                 yield Button("保存修改", id="save", variant="primary")
@@ -355,6 +453,7 @@ class SettingsScreen(ModalBase):
         if event.button.id != "save" or self._busy:
             return
         values = {name: widget.value for name, widget in self._fields.items()}
+        values["notifications_enabled"] = self._notif.value
         self._busy = True
         self._set_error("")
         ok, result = await self._bridge.preview_settings(values)

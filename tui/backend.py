@@ -26,7 +26,7 @@ from zhibo.detail import build_detail_view
 from zhibo.desktop import mpv_command, new_mpv_ipc_path, play_url
 from zhibo.import_preview import ImportPreviewService
 from zhibo.monitor import FollowerStatus, MonitorService, StatusHistoryEntry
-from zhibo.plugins import list_plugins
+from zhibo.plugins import get_plugin, list_plugins
 from zhibo.plugins.base import stream_candidate_urls
 from zhibo.plugins.bounded_executor import shutdown_plugin_workers
 from zhibo.proxy_config import (
@@ -1269,3 +1269,99 @@ class MonitorBridge:
             self._log(f"下载完成：{path}")
         except Exception as exc:
             self._log(f"下载失败：{redact_sensitive_text(str(exc))}")
+
+    # ---- 表格内快捷修改：画质 / 插件 --------------------------------------
+
+    def get_field_options(self, follower_index: int) -> dict | None:
+        service = self.service
+        if service is None:
+            return None
+        status = service.followers.get(follower_index)
+        if status is None:
+            return None
+        follower = status.follower
+        plugin = follower.plugin or ""
+        platform = follower.platform or ""
+        quality = follower.quality or "best"
+        return {
+            "plugin": list_plugins(),
+            "quality": [
+                {"label": label, "value": value}
+                for label, value in quality_options(plugin, platform, quality)
+            ],
+        }
+
+    def set_quality(self, follower_index: int, quality: str) -> None:
+        self._spawn(self._set_quality(follower_index, str(quality)))
+
+    async def _set_quality(self, follower_index: int, quality: str) -> None:
+        try:
+            service = self._require()
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的直播间已不存在")
+            if service.is_polling or status.is_checking:
+                raise ValueError("状态检测进行中，请在本轮结束后选择画质")
+            current = status.follower
+            selected = normalize_quality_choice(current.plugin, current.platform, quality)
+            if (current.quality or "best").casefold() == selected.casefold():
+                self._log(f"{current.name} 已使用该画质")
+                return
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_follower,
+                follower_index,
+                {"quality": selected},
+                expected_key=follower_key(current),
+                expected_follower=copy.deepcopy(current),
+            )
+            updated = persisted.follower
+            service.cfg.followers[follower_index] = updated
+            status.follower = updated
+            self._emit_snapshot()
+            label = "最优画质" if selected.casefold() == "best" else selected
+            self._log(f"已将 {updated.name} 的默认画质设为 {label}")
+        except Exception as exc:
+            self._log(redact_sensitive_text(str(exc)))
+
+    def set_plugin(self, follower_index: int, plugin: str) -> None:
+        self._spawn(self._set_plugin(follower_index, str(plugin)))
+
+    async def _set_plugin(self, follower_index: int, plugin: str) -> None:
+        try:
+            service = self._require()
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的直播间已不存在")
+            if service.is_polling or status.is_checking:
+                raise ValueError("状态检测进行中，请在本轮结束后切换插件")
+            current = status.follower
+            selected = str(plugin or "").strip()
+            if get_plugin(selected) is None:
+                raise ValueError(f"未知插件：{selected}")
+            if (current.plugin or "").casefold() == selected.casefold():
+                self._log(f"{current.name} 已使用 {selected}")
+                return
+            remapped = quality_for_plugin(
+                current.quality,
+                source_plugin=current.plugin,
+                target_plugin=selected,
+                platform=current.platform,
+            )
+            values = {"plugin": selected}
+            if remapped != (current.quality or "best"):
+                values["quality"] = remapped
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_follower,
+                follower_index,
+                values,
+                expected_key=follower_key(current),
+                expected_follower=copy.deepcopy(current),
+            )
+            updated = persisted.follower
+            service.cfg.followers[follower_index] = updated
+            status.follower = updated
+            self._emit_snapshot()
+            note = f"（画质映射为 {remapped}）" if "quality" in values else ""
+            self._log(f"已将 {updated.name} 的检测插件切换为 {selected}{note}")
+        except Exception as exc:
+            self._log(redact_sensitive_text(str(exc)))

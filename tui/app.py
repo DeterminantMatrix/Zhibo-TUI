@@ -16,7 +16,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static, Tab, Tabs
+from textual.widgets import Button, DataTable, Header, Input, RichLog, Static, Tab, Tabs
 
 from tui.backend import MonitorBridge
 from tui.screens import (
@@ -24,6 +24,7 @@ from tui.screens import (
     DownloadScreen,
     EditScreen,
     ImportScreen,
+    PickScreen,
     ProxyScreen,
     SettingsScreen,
     UpdateCenterScreen,
@@ -188,6 +189,26 @@ class ZhiboTui(App):
         padding: 0 1;
         overflow-x: hidden;
     }
+    #actionBar {
+        height: 1;
+        background: $surface;
+    }
+    #actionBar Button {
+        min-width: 0;
+        height: 1;
+        border: none;
+        background: transparent;
+        padding: 0 1;
+    }
+    #actionBar Button:hover {
+        background: $surface-darken-1;
+    }
+    #actionBar .corner {
+        text-style: bold;
+    }
+    #abSpacer {
+        width: 1fr;
+    }
     """
 
     # 列序（用户定稿）：状态 | 标签 | 平台 | 主播 | 标题 | 画质 | 插件 | 检测
@@ -261,7 +282,20 @@ class ZhiboTui(App):
         with Horizontal(id="mainArea"):
             yield DataTable(id="streamTable", cursor_type="row", zebra_stripes=True)
             yield RichLog(id="log", markup=True, wrap=True)
-        yield Footer()
+        with Horizontal(id="actionBar"):
+            yield Button("播放", id="abPlay", classes="corner")
+            yield Button("详情", id="abDetail")
+            yield Button("编辑", id="abEdit")
+            yield Button("停用/恢复", id="abToggle")
+            yield Button("设置", id="abSettings")
+            yield Button("代理", id="abProxy")
+            yield Button("更新", id="abUpdates")
+            yield Button("下载", id="abDownload")
+            yield Button("日志", id="abLog")
+            yield Button("刷新", id="abRefresh")
+            yield Button("退出", id="abQuit")
+            yield Static("", id="abSpacer")
+            yield Button("导入", id="abImport", classes="corner")
 
     async def on_mount(self) -> None:
         table = self.query_one(
@@ -431,6 +465,68 @@ class ZhiboTui(App):
 
     # ---- 交互动作 ---------------------------------------------------------
 
+    _BAR_ACTIONS = {
+        "abPlay": "action_play",
+        "abDetail": "action_detail",
+        "abEdit": "action_edit",
+        "abToggle": "action_toggle_enabled",
+        "abSettings": "action_settings",
+        "abProxy": "action_proxy",
+        "abUpdates": "action_updates",
+        "abDownload": "action_download",
+        "abLog": "action_toggle_log",
+        "abRefresh": "action_refresh",
+        "abQuit": "action_quit",
+        "abImport": "action_import_room",
+    }
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        action = self._BAR_ACTIONS.get(event.button.id or "")
+        if action is not None:
+            getattr(self, action)()
+
+    # 画质/插件列：点击直接弹选择框（列序 5=画质 6=插件）。
+    _PICK_COLUMNS = {5: "quality", 6: "plugin"}
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        column = event.coordinate.column
+        if column not in self._PICK_COLUMNS:
+            return
+        row_key = event.cell_key.row_key
+        if row_key is None or not isinstance(row_key.value, int) or self._bridge is None:
+            return
+        self._open_field_picker(row_key.value, self._PICK_COLUMNS[column])
+
+    def _open_field_picker(self, idx: int, field: str) -> None:
+        options = self._bridge.get_field_options(idx) if self._bridge is not None else None
+        if options is None:
+            return
+        current_row = next((r for r in self._rows if r["idx"] == idx), {})
+        if field == "quality":
+            current = current_row.get("configured_quality", "best")
+            opts = [(q["label"], q["value"]) for q in options["quality"]]
+            if current and all(v != current for _l, v in opts):
+                opts.insert(0, (current, current))
+            self.push_screen(PickScreen("选择画质", opts, current, self._make_quality_pick(idx)))
+        else:
+            cur_plugin = current_row.get("configured_plugin", "")
+            opts = [(p, p) for p in options["plugin"]]
+            if cur_plugin and all(p != cur_plugin for _l, p in opts):
+                opts.insert(0, (cur_plugin, cur_plugin))
+            self.push_screen(PickScreen("选择检测插件", opts, cur_plugin, self._make_plugin_pick(idx)))
+
+    def _make_quality_pick(self, idx: int):
+        def _pick(value: str) -> None:
+            if self._bridge is not None:
+                self._bridge.set_quality(idx, value)
+        return _pick
+
+    def _make_plugin_pick(self, idx: int):
+        def _pick(value: str) -> None:
+            if self._bridge is not None:
+                self._bridge.set_plugin(idx, value)
+        return _pick
+
     def _modal_open(self) -> bool:
         """弹层打开时屏蔽主界面动作（q/空格等全局键不该穿透）。"""
         return len(self.screen_stack) > 1
@@ -454,6 +550,9 @@ class ZhiboTui(App):
         """表格内按 Enter 触发行选中 = 播放/停止切换。"""
         if self._modal_open():
             return
+        table = self.query_one("#streamTable", DataTable)
+        if table.cursor_coordinate.column in self._PICK_COLUMNS:
+            return  # 画质/插件列上按 Enter = 打开选择框
         row_key = event.row_key
         if (
             row_key is None

@@ -72,6 +72,18 @@ class FakeBridge:
     def stop_one(self, idx: int) -> None:
         self.stopped_one.append(idx)
 
+    def get_field_options(self, idx: int) -> dict:
+        return {
+            "plugin": ["streamlink", "streamget"],
+            "quality": [{"label": "best", "value": "best"}, {"label": "高清", "value": "高清"}],
+        }
+
+    def set_quality(self, idx: int, quality: str) -> None:
+        self.quality_set = (idx, quality)
+
+    def set_plugin(self, idx: int, plugin: str) -> None:
+        self.plugin_set = (idx, plugin)
+
     def stop_all_players(self) -> None:
         self.stopped_all += 1
 
@@ -501,3 +513,65 @@ async def test_tui_download_flow():
         assert bar.progress == 100.0
         assert bridge.dl_started == 0
         assert bridge.dl_formats_url == "https://youtu.be/x"
+
+
+@pytest.mark.asyncio
+async def test_tui_inline_quality_plugin_pick():
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+        # 打开画质选择（等效点击画质列）。
+        app._open_field_picker(0, "quality")
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 2:
+                break
+        assert len(app.screen_stack) == 2
+        # 选"高清"。
+        screen = app.screen
+        idxs = [v for _l, v in screen._options]
+        assert "高清" in idxs
+        screen._on_pick("高清")
+        await pilot.pause()
+        assert bridge.quality_set == (0, "高清")
+
+        # 插件选择。
+        app._open_field_picker(0, "plugin")
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 2:
+                break
+        app.screen._on_pick("streamget")
+        await pilot.pause()
+        assert bridge.plugin_set == (0, "streamget")
+
+
+@pytest.mark.asyncio
+async def test_tui_action_bar_layout():
+    from textual.widgets import Button
+
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+        buttons = app.query("#actionBar Button")
+        labels = [b.label for b in buttons]
+        assert labels[0] == "播放"
+        assert labels[-1] == "导入"
+        play_btn = app.query_one("#abPlay", Button)
+        import_btn = app.query_one("#abImport", Button)
+        assert "corner" in play_btn.classes and "corner" in import_btn.classes
+        # 点击导入打开导入弹层。
+        app.query_one("#abImport", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 2:
+                break
+        assert len(app.screen_stack) == 2
+        app.screen.query_one("#close", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 1:
+                break
+        assert len(app.screen_stack) == 1
