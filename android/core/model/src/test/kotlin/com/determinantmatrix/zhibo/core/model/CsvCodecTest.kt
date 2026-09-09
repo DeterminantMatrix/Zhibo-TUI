@@ -1,5 +1,6 @@
 package com.determinantmatrix.zhibo.core.model
 
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

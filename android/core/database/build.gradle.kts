@@ -21,8 +21,9 @@ android {
 }
 
 dependencies {
-    implementation(project(":core:model"))
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
+    api(project(":core:model"))
+    // RoomDatabase 是公开类的父类、Flow 是 DAO 公开返回类型，需 api 透传
+    api(libs.androidx.room.runtime)
+    api(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 }

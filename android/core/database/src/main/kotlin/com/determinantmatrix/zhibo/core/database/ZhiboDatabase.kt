@@ -24,6 +24,7 @@ data class FollowerEntity(
     val platform: String,
     val quality: String,
     val tags: String,
+    val sportId: String,
     val extraJson: String,
     val enabled: Boolean,
     val fallbackPlugins: String,
