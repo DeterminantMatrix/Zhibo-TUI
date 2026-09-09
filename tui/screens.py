@@ -62,26 +62,28 @@ class ModalBase(ModalScreen):
         width: 14;
         padding: 0 1 0 0;
     }
-    .form-row Input, .form-row Select {
+    .form-row Input, .form-row Select,
+    .form-row Input:focus, .form-row Select:focus {
         width: 1fr;
         height: 1;
         border: none;
         background: $surface-darken-1;
         padding: 0 1;
     }
-    .form-row TextArea {
+    .form-row TextArea, .form-row TextArea:focus {
         height: 6;
         border: none;
         background: $surface-darken-1;
     }
     .button-row {
-        height: 3;
+        height: 1;
         margin-top: 1;
         align-horizontal: right;
     }
-    .button-row Button {
-        margin-left: 2;
+    .button-row Button, .button-row Button:focus {
         min-width: 0;
+        height: 1;
+        border: none;
         padding: 0 2;
     }
     .form-error {

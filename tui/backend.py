@@ -2,7 +2,7 @@
 
 与 webui 时代的线程桥不同：Textual 本身就是 asyncio，监控服务直接跑在
 UI 的事件循环里，回调可以安全地同步更新界面。播放器状态同样只在本
-循环内访问。UI 通过三个回调接收事件：on_snapshot / on_log / on_player。
+循环内访问。UI 通过三个回调接收事件：on_snapshot / on_log / on_players。
 """
 from __future__ import annotations
 
@@ -130,17 +130,13 @@ class MonitorBridge:
         # UI 注册的事件回调（Textual 单循环内同步调用，无需线程封送）。
         self.on_snapshot = None  # callable(dict)
         self.on_log = None  # callable(str)
-        self.on_player = None  # callable(idx: int | None)
+        self.on_players = None  # callable(list[int])
         self._run_task: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
-        # 播放器状态：单播放器 + CDN 候选 + 代数守卫（与 Qt 版同构）。
-        self._player_process: subprocess.Popen | None = None
-        self._player_ipc = ""
-        self._player_generation = 0
-        self._player_candidates: list[str] = []
-        self._player_candidate_index = 0
-        self._player_payload: dict = {}
-        self._playing_idx = -1
+        # 多播放器：最多 3 个 mpv 并发；epoch 让"全部停止"使在途启动失效。
+        self.MAX_PLAYERS = 3
+        self._players: dict[int, dict] = {}  # idx -> {process, ipc}
+        self._player_epoch = 0
         self._poll_round = 0
         self._pending: dict = {}
         self._update_process: asyncio.subprocess.Process | None = None
@@ -206,29 +202,25 @@ class MonitorBridge:
                 pass
 
     def _terminate_player(self) -> None:
-        process = self._player_process
-        self._player_process = None
-        if process is None or process.poll() is not None:
-            return
-        try:
-            process.terminate()
-            process.wait(timeout=2.0)
-        except Exception:
+        for handle in self._players.values():
+            process = handle["process"]
+            if process.poll() is not None:
+                continue
             try:
-                process.kill()
-            except OSError:
-                pass
+                process.terminate()
+                process.wait(timeout=2.0)
+            except Exception:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        self._players.clear()
 
     # ---- 事件推送 -------------------------------------------------------
 
     def _log(self, text: str) -> None:
         if self.on_log is not None:
             self.on_log(text)
-
-    def _set_playing(self, idx: int) -> None:
-        self._playing_idx = idx
-        if self.on_player is not None:
-            self.on_player(idx if idx >= 0 else None)
 
     def _emit_snapshot(self) -> None:
         service = self.service
@@ -293,11 +285,19 @@ class MonitorBridge:
         except Exception as exc:
             self._log(f"手动刷新失败：{redact_sensitive_text(str(exc))}")
 
+    MAX_PLAYERS = 3
+
     def play(self, follower_index: int) -> None:
         self._spawn(self._play(follower_index))
 
     async def _play(self, follower_index: int) -> None:
         try:
+            if follower_index in self._players:
+                self._log("该直播间已在播放")
+                return
+            if len(self._players) >= self.MAX_PLAYERS:
+                self._log(f"最多同时播放 {self.MAX_PLAYERS} 个直播间，请先停止一个")
+                return
             service = self._require()
             if follower_index not in service.followers:
                 self._log("没有可用的选中项")
@@ -307,71 +307,59 @@ class MonitorBridge:
             url = info.flv_url or info.m3u8_url or info.stream_url
             if not url:
                 raise RuntimeError("插件没有返回可用流地址")
-            await self._stop_player()
-            self._player_ipc = new_mpv_ipc_path()
-            self._player_candidates = list(dict.fromkeys(
+            epoch = self._player_epoch
+            ipc = new_mpv_ipc_path()
+            candidates = list(dict.fromkeys(
                 str(item) for item in (stream_candidate_urls(info) or [url]) if item
             ))
-            self._player_candidate_index = 0
-            self._player_payload = {
-                "title": f"{follower.name} - Zhibo",
-                "headers": dict(info.extra.get("headers", {})),
-                "proxy": proxy_for_platform(follower.platform) or "",
-            }
-            self._set_playing(follower_index)
-            await self._start_next_candidate(self._player_generation)
+            process = None
+            for candidate in candidates:
+                try:
+                    process = await asyncio.to_thread(
+                        play_url,
+                        candidate,
+                        title=f"{follower.name} - Zhibo",
+                        headers=dict(info.extra.get("headers", {})),
+                        proxy_url=proxy_for_platform(follower.platform) or "",
+                        use_cache=True,
+                        ipc_path=ipc,
+                    )
+                except Exception as exc:
+                    self._log(f"CDN 候选启动失败：{redact_sensitive_text(str(exc))}")
+                    continue
+                # 与 Qt 版一致：1 秒后验证进程存活，早退则自动切换下一条。
+                await asyncio.sleep(1.0)
+                if epoch != self._player_epoch:
+                    try:
+                        process.terminate()
+                    except OSError:
+                        pass
+                    return
+                if process.poll() is None:
+                    self._players[follower_index] = {"process": process, "ipc": ipc}
+                    self._push_players()
+                    self._log("已启动 mpv 播放")
+                    return
+                code = process.returncode
+                self._log(f"CDN 候选启动失败（退出码={code}），自动切换下一条")
+            if epoch != self._player_epoch:
+                return
+            self._log(f"mpv 的全部 {len(candidates)} 条 CDN 候选均启动失败")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._log(f"获取直播流失败：{redact_sensitive_text(str(exc))}")
 
-    async def _start_next_candidate(self, generation: int) -> None:
-        if generation != self._player_generation:
-            return
-        while self._player_candidate_index < len(self._player_candidates):
-            url = self._player_candidates[self._player_candidate_index]
-            self._player_candidate_index += 1
-            try:
-                process = await asyncio.to_thread(
-                    play_url,
-                    url,
-                    title=str(self._player_payload.get("title", "Zhibo")),
-                    headers=dict(self._player_payload.get("headers", {})),
-                    proxy_url=str(self._player_payload.get("proxy", "")),
-                    use_cache=True,
-                    ipc_path=self._player_ipc,
-                )
-            except Exception as exc:
-                self._log(f"CDN 候选启动失败：{redact_sensitive_text(str(exc))}")
-                continue
-            self._player_process = process
-            await asyncio.sleep(1.0)
-            if generation != self._player_generation:
-                return
-            if process.poll() is None:
-                self._log("已启动 mpv 播放")
-                return
-            code = process.returncode
-            self._player_process = None
-            self._log(f"CDN 候选启动失败（退出码={code}），自动切换下一条")
-        if generation != self._player_generation or not self._player_candidates:
-            return
-        self._player_process = None
-        self._set_playing(-1)
-        self._log(f"mpv 的全部 {len(self._player_candidates)} 条 CDN 候选均启动失败")
+    def stop_one(self, follower_index: int) -> None:
+        self._spawn(self._stop_one(follower_index))
 
-    def stop_player(self) -> None:
-        self._spawn(self._stop_player())
-
-    async def _stop_player(self) -> None:
-        self._player_generation += 1
-        self._player_candidates = []
-        self._player_candidate_index = 0
-        self._player_ipc = ""
-        self._set_playing(-1)
-        process = self._player_process
-        self._player_process = None
-        if process is None or process.poll() is not None:
+    async def _stop_one(self, follower_index: int) -> None:
+        handle = self._players.pop(follower_index, None)
+        if handle is None:
+            return
+        self._push_players()
+        process = handle["process"]
+        if process.poll() is not None:
             return
         try:
             process.terminate()
@@ -379,16 +367,46 @@ class MonitorBridge:
             return
         try:
             await asyncio.to_thread(process.wait, 2.0)
-            self._log("已停止当前 mpv")
+            self._log("已停止该直播间播放")
             return
         except subprocess.TimeoutExpired:
             pass
         try:
             process.kill()
             await asyncio.to_thread(process.wait, 1.0)
-            self._log("已强制结束当前 mpv")
+            self._log("已强制结束该播放进程")
         except (OSError, subprocess.TimeoutExpired):
-            self._log("mpv 进程未能立即退出，可能仍占用播放文件")
+            self._log("播放进程未能立即退出，可能仍占用播放文件")
+
+    def stop_all_players(self) -> None:
+        self._spawn(self._stop_all_players())
+
+    async def _stop_all_players(self) -> None:
+        self._player_epoch += 1
+        handles = list(self._players.values())
+        self._players.clear()
+        self._push_players()
+        stopped = 0
+        for handle in handles:
+            process = handle["process"]
+            if process.poll() is not None:
+                continue
+            try:
+                process.terminate()
+            except OSError:
+                continue
+            try:
+                await asyncio.to_thread(process.wait, 2.0)
+                stopped += 1
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                    await asyncio.to_thread(process.wait, 1.0)
+                    stopped += 1
+                except (OSError, subprocess.TimeoutExpired):
+                    self._log("mpv 进程未能立即退出，可能仍占用播放文件")
+        if stopped:
+            self._log(f"已停止 {stopped} 个 mpv 播放")
 
     def player_control(self, action: str) -> None:
         self._spawn(self._player_control(str(action or "")))
@@ -403,12 +421,17 @@ class MonitorBridge:
         command = commands.get(action)
         if command is None:
             return
-        process = self._player_process
-        if process is None or process.poll() is not None:
+        if not self._players:
             self._log("mpv 当前没有正在播放")
             return
-        if not mpv_command(self._player_ipc, *command):
-            self._log("无法连接 mpv 控制通道")
+        # 音量/静音作用于全部播放窗口。
+        for handle in self._players.values():
+            if not mpv_command(handle["ipc"], *command):
+                self._log("无法连接 mpv 控制通道")
+
+    def _push_players(self) -> None:
+        if self.on_players is not None:
+            self.on_players(sorted(self._players.keys()))
 
     def copy_stream(self, follower_index: int) -> None:
         self._spawn(self._copy_stream(follower_index))
@@ -879,8 +902,8 @@ class MonitorBridge:
                 if old_index != index
             }
             self._pending.pop("edit", None)
-            if self._playing_idx == index:
-                await self._stop_player()
+            if index in self._players:
+                await self._stop_one(index)
             self._emit_snapshot()
             return True, f"已删除直播间：{removed.name}"
         except Exception as exc:

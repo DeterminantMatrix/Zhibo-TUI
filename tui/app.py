@@ -244,7 +244,7 @@ class ZhiboTui(App):
         self._tag = "全部"
         self._query = ""
         self._theme_index = 0
-        self._playing_idx = None
+        self._playing: set[int] = set()
         self._rows: list[dict] = []
         self._tags: list[str] = ["全部"]
         self._col_keys: dict[str, object] = {}
@@ -278,7 +278,7 @@ class ZhiboTui(App):
         bridge = self._bridge
         bridge.on_snapshot = self.apply_snapshot
         bridge.on_log = self.log_line
-        bridge.on_player = self.set_player
+        bridge.on_players = self.set_players
         for note in self._startup_notes:
             self.log_line(note)
         await bridge.start()
@@ -295,8 +295,8 @@ class ZhiboTui(App):
         now = datetime.now().strftime("%H:%M:%S")
         self.query_one("#log", RichLog).write(f"[dim]{now}[/dim] {escape(str(text))}")
 
-    def set_player(self, idx: int | None) -> None:
-        self._playing_idx = idx
+    def set_players(self, idxs: list[int]) -> None:
+        self._playing = set(idxs)
         self._refresh_status_cells()
 
     def apply_snapshot(self, snapshot: dict) -> None:
@@ -389,7 +389,7 @@ class ZhiboTui(App):
                     key=f"sep-{sep}",
                 )
             cells: list = (
-                _status_cell(row, row["idx"] == self._playing_idx),
+                _status_cell(row, row["idx"] in self._playing),
                 "、".join(row.get("tags") or []) or "-",
                 row.get("platform", "-"),
                 row.get("name", "-"),
@@ -417,7 +417,7 @@ class ZhiboTui(App):
                 self.query_one("#streamTable", DataTable).update_cell(
                     self._row_keys[idx],
                     self._col_keys["status"],
-                    _status_cell(row, idx == self._playing_idx),
+                    _status_cell(row, idx in self._playing),
                 )
 
     def _selected_idx(self) -> int | None:
@@ -442,24 +442,34 @@ class ZhiboTui(App):
         if self._modal_open():
             return
         idx = self._selected_idx()
-        if idx is not None and self._bridge is not None:
+        if idx is None or self._bridge is None:
+            return
+        # 已在播放的行再按一次 = 停止该直播间（多播放器语义）。
+        if idx in self._playing:
+            self._bridge.stop_one(idx)
+        else:
             self._bridge.play(idx)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """表格内按 Enter 触发行选中 = 播放。"""
+        """表格内按 Enter 触发行选中 = 播放/停止切换。"""
         if self._modal_open():
             return
         row_key = event.row_key
         if (
-            row_key is not None
-            and isinstance(row_key.value, int)
-            and self._bridge is not None
+            row_key is None
+            or not isinstance(row_key.value, int)
+            or self._bridge is None
         ):
-            self._bridge.play(row_key.value)
+            return
+        idx = row_key.value
+        if idx in self._playing:
+            self._bridge.stop_one(idx)
+        else:
+            self._bridge.play(idx)
 
     def action_stop_player(self) -> None:
         if self._bridge is not None:
-            self._bridge.stop_player()
+            self._bridge.stop_all_players()
 
     def action_detail(self) -> None:
         if self._modal_open():

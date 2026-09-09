@@ -41,7 +41,8 @@ class FakeBridge:
         self.started = False
         self.stopped = False
         self.played: list[int] = []
-        self.stopped_player = 0
+        self.stopped_one: list[int] = []
+        self.stopped_all = 0
         self.refreshed = 0
         self.toggled: list[int] = []
         self.copied: list[int] = []
@@ -68,8 +69,11 @@ class FakeBridge:
     def play(self, idx: int) -> None:
         self.played.append(idx)
 
-    def stop_player(self) -> None:
-        self.stopped_player += 1
+    def stop_one(self, idx: int) -> None:
+        self.stopped_one.append(idx)
+
+    def stop_all_players(self) -> None:
+        self.stopped_all += 1
 
     def copy_stream(self, idx: int) -> None:
         self.copied.append(idx)
@@ -249,9 +253,9 @@ async def test_tui_renders_snapshot_and_bindings():
         assert table.row_count == 3
 
         # 播放状态回调刷新状态列（不抛异常即可）。
-        app.set_player(1)
+        app.set_players([1])
         await pilot.pause()
-        app.set_player(None)
+        app.set_players([])
         await pilot.pause()
 
 
@@ -281,7 +285,7 @@ async def test_tui_tag_filter_and_lifecycle():
         app.action_toggle_enabled()
         await pilot.pause()
         assert bridge.refreshed == 1
-        assert bridge.stopped_player == 1
+        assert bridge.stopped_all == 1
         assert bridge.copied == [0]
         assert bridge.opened == [0]
         assert bridge.toggled == [0]
