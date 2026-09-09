@@ -83,6 +83,19 @@ class ModalBase(ModalScreen):
     def action_dismiss_screen(self) -> None:
         self.dismiss()
 
+    def _alive(self) -> bool:
+        """await 之后界面可能已被关闭；先确认弹层还在再更新 UI。"""
+        try:
+            self.query_one(".panel")
+            return True
+        except Exception:
+            return False
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+
     def _set_error(self, message: str) -> None:
         try:
             error = self.query_one(".form-error", Static)
@@ -135,6 +148,8 @@ class ConfirmScreen(ModalBase):
             event.button.disabled = True
             ok, message = await self._on_confirm()
             self._busy = False
+            if not self._alive():
+                return
             if ok:
                 self.app.log_line(message)
                 self.app.notify(message, title="操作完成")
@@ -240,6 +255,10 @@ class EditScreen(ModalBase):
                 yield Button("关闭", id="close")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+            return
         if event.button.id != "save" or self._busy:
             return
         values = {
@@ -250,6 +269,8 @@ class EditScreen(ModalBase):
         self._set_error("")
         ok, result = await self._bridge.preview_edit(self._payload["idx"], values)
         self._busy = False
+        if not self._alive():
+            return
         if not ok:
             self._set_error(result)
             return
@@ -306,6 +327,10 @@ class SettingsScreen(ModalBase):
                 yield Button("关闭", id="close")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+            return
         if event.button.id != "save" or self._busy:
             return
         values = {name: widget.value for name, widget in self._fields.items()}
@@ -313,6 +338,8 @@ class SettingsScreen(ModalBase):
         self._set_error("")
         ok, result = await self._bridge.preview_settings(values)
         self._busy = False
+        if not self._alive():
+            return
         if not ok:
             self._set_error(result)
             return
@@ -354,6 +381,10 @@ class ProxyScreen(ModalBase):
                 yield Button("关闭", id="close")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+            return
         if self._busy:
             return
         values = {name: widget.value for name, widget in self._fields.items()}
@@ -362,6 +393,8 @@ class ProxyScreen(ModalBase):
             self._set_error("")
             results = await self._bridge.test_proxy(values)
             self._busy = False
+            if not self._alive():
+                return
             lines = Text()
             for item in results:
                 if item["status"] == "ok":
@@ -386,6 +419,8 @@ class ProxyScreen(ModalBase):
             self._set_error("")
             ok, message = await self._bridge.save_proxy(values)
             self._busy = False
+            if not self._alive():
+                return
             if ok:
                 self.app.log_line(message)
                 self.app.notify(message, title="代理已保存")
@@ -422,6 +457,10 @@ class ImportScreen(ModalBase):
                 yield Button("关闭", id="close")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+            return
         if self._busy:
             return
         if event.button.id == "preview":
@@ -436,6 +475,8 @@ class ImportScreen(ModalBase):
                 url, self._tag.value.strip() or "未分类"
             )
             self._busy = False
+            if not self._alive():
+                return
             if not ok:
                 self._set_error(str(result))
                 return
@@ -450,6 +491,8 @@ class ImportScreen(ModalBase):
             self._busy = True
             ok, message = await self._bridge.confirm_import()
             self._busy = False
+            if not self._alive():
+                return
             if ok:
                 self.app.log_line(message)
                 self.app.notify(message, title="导入完成")

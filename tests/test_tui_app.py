@@ -281,6 +281,36 @@ async def test_tui_edit_transaction_flow():
 
 
 @pytest.mark.asyncio
+async def test_tui_close_button_dismisses_every_dialog():
+    import asyncio
+
+    from textual.widgets import Button
+
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+
+        async def wait_stack(depth: int, timeout: float = 3.0) -> bool:
+            loop = asyncio.get_event_loop()
+            deadline = loop.time() + timeout
+            while loop.time() < deadline:
+                if len(app.screen_stack) == depth:
+                    return True
+                await pilot.pause(0.05)
+            return len(app.screen_stack) == depth
+
+        for key in ("s", "p", "i", "e"):
+            await pilot.press(key)
+            assert await wait_stack(2), f"{key} 弹层未打开"
+            app.screen.query_one("#close", Button).press()
+            assert await wait_stack(1), f"{key} 弹层的关闭按钮不生效"
+            # 焦点还给表格，避免悬空焦点吃掉下一个按键。
+            app.query_one("#streamTable", DataTable).focus()
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_tui_settings_proxy_import_delete_flows():
     from textual.widgets import Button, Input
 
