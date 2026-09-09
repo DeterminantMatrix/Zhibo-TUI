@@ -211,14 +211,21 @@ class PickScreen(ModalBase):
         align: center middle;
         background: $background 60%;
     }
+    #pickBox {
+        width: 46;
+        max-height: 70%;
+        border: round $accent;
+        background: $surface;
+        padding: 1;
+    }
     #pickTitle {
         margin-bottom: 1;
         text-style: bold;
     }
     #pickList {
-        width: 44;
-        max-height: 70%;
-        border: round $accent;
+        height: auto;
+        max-height: 16;
+        border: round $accent 30%;
         background: $surface;
     }
     """
@@ -231,8 +238,9 @@ class PickScreen(ModalBase):
         self._on_pick = on_pick
 
     def compose(self) -> ComposeResult:
-        yield Static(self._title, id="pickTitle")
-        yield OptionList(id="pickList")
+        with Vertical(id="pickBox"):
+            yield Static(self._title, id="pickTitle")
+            yield OptionList(id="pickList")
 
     def on_mount(self) -> None:
         option_list = self.query_one("#pickList", OptionList)
