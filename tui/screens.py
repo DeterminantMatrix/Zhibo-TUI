@@ -42,8 +42,9 @@ class ModalBase(ModalScreen):
         align: center middle;
         background: $background 60%;
     }
+    /* 紧凑弹层：单行无边框输入、窄按钮，信息密度对齐更新中心表格 */
     .panel {
-        width: 100;
+        width: 76;
         max-height: 86%;
         border: round $accent;
         background: $surface;
@@ -55,17 +56,23 @@ class ModalBase(ModalScreen):
         margin-bottom: 1;
     }
     .form-row {
-        height: 3;
+        height: 1;
     }
     .form-label {
-        width: 16;
-        padding: 1 1 0 0;
+        width: 14;
+        padding: 0 1 0 0;
     }
     .form-row Input, .form-row Select {
         width: 1fr;
+        height: 1;
+        border: none;
+        background: $surface-darken-1;
+        padding: 0 1;
     }
     .form-row TextArea {
-        height: 8;
+        height: 6;
+        border: none;
+        background: $surface-darken-1;
     }
     .button-row {
         height: 3;
@@ -74,6 +81,8 @@ class ModalBase(ModalScreen):
     }
     .button-row Button {
         margin-left: 2;
+        min-width: 0;
+        padding: 0 2;
     }
     .form-error {
         color: $error;
@@ -515,6 +524,9 @@ class UpdateCenterScreen(ModalBase):
     """更新中心：组件表格（名称/当前版本/最新版本/是否需要更新）+ 详情与操作。"""
 
     CSS = """
+    .panel {
+        width: 100;
+    }
     #ucTable {
         height: 1fr;
         min-height: 12;
@@ -639,7 +651,7 @@ class UpdateCenterScreen(ModalBase):
         if item is None:
             return
         action = self.query_one("#ucAction", Button)
-        action.label = f"{item.get('actionLabel', '操作')} · {item.get('label', '')}"
+        action.label = str(item.get("actionLabel", "操作"))
         action.disabled = not bool(item.get("actionEnabled"))
         body = Text()
         body.append(item.get("description", "") + "\n", style="dim")

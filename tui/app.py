@@ -144,6 +144,10 @@ class ZhiboTui(App):
     # 用户要求隐藏底栏的 palette 提示（Ctrl+P 一并停用）。
     ENABLE_COMMAND_PALETTE = False
 
+    def get_key_display(self, binding: Binding) -> str:
+        # 底栏只显示动作名，不显示快捷键字母。
+        return ""
+
     CSS = """
     * {
         scrollbar-size-horizontal: 1;
@@ -201,24 +205,24 @@ class ZhiboTui(App):
     )
 
     BINDINGS = [
-        Binding("q", "quit", "退出"),
-        Binding("/", "focus_search", "搜索"),
         Binding("enter", "play", "播放"),
-        Binding("x", "stop_player", "停止", show=False),
         Binding("d", "detail", "详情"),
         Binding("e", "edit", "编辑"),
-        Binding("c", "copy_stream", "复制流", show=False),
-        Binding("o", "open_web", "网页", show=False),
         Binding("space", "toggle_enabled", "停用/恢复"),
-        Binding("delete", "delete_row", "删除", show=False),
         Binding("s", "settings", "设置"),
         Binding("p", "proxy", "代理"),
         Binding("i", "import_room", "导入"),
-        Binding("n", "toggle_notifications", "通知", show=False),
         Binding("u", "updates", "更新"),
         Binding("w", "download", "下载"),
-        Binding("l", "toggle_log", "日志"),
         Binding("r", "refresh", "刷新"),
+        Binding("l", "toggle_log", "日志"),
+        Binding("q", "quit", "退出"),
+        Binding("/", "focus_search", "搜索", show=False),
+        Binding("x", "stop_player", "停止", show=False),
+        Binding("c", "copy_stream", "复制流", show=False),
+        Binding("o", "open_web", "网页", show=False),
+        Binding("delete", "delete_row", "删除", show=False),
+        Binding("n", "toggle_notifications", "通知", show=False),
         Binding("t", "cycle_theme", "主题", show=False),
         Binding("ctrl+up", "volume_up", "音量+", show=False),
         Binding("ctrl+down", "volume_down", "音量-", show=False),
