@@ -232,7 +232,11 @@ async def test_tui_renders_snapshot_and_bindings():
         table = app.query_one("#streamTable", DataTable)
         # 2 个数据行 + 开播/未开播之间的分隔行。
         assert table.row_count == 3
-        # 快照进了日志面板。
+        # 日志默认收起；按 l 展开后能看到历史日志。
+        await pilot.press("l")
+        await pilot.pause()
+        log = app.query_one("#log", RichLog)
+        assert log.display is True
         assert any("假日志一行" in "".join(str(s) for s in log.lines)
                    for log in [app.query_one("#log", RichLog)])
 

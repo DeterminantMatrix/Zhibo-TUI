@@ -185,6 +185,7 @@ class ZhiboTui(App):
         width: 1fr;
         border: none;
         padding: 0;
+        text-style: bold;
     }
     #liveCount {
         width: auto;
@@ -209,6 +210,7 @@ class ZhiboTui(App):
     }
     #log {
         width: 34;
+        display: none;
         border: round $accent 30%;
         padding: 0 1;
         overflow-x: hidden;
@@ -304,6 +306,7 @@ class ZhiboTui(App):
         self._query = ""
         self._theme_index = 0
         self._playing: set[int] = set()
+        self._log_lines: list[str] = []
         self._rows: list[dict] = []
         self._tags: list[str] = ["全部"]
         self._col_keys: dict[str, object] = {}
@@ -366,7 +369,13 @@ class ZhiboTui(App):
 
     def log_line(self, text: str) -> None:
         now = datetime.now().strftime("%H:%M:%S")
-        self.query_one("#log", RichLog).write(f"[dim]{now}[/dim] {escape(str(text))}")
+        line = f"[dim]{now}[/dim] {escape(str(text))}"
+        self._log_lines.append(line)
+        if len(self._log_lines) > 500:
+            del self._log_lines[: len(self._log_lines) - 500]
+        log = self.query_one("#log", RichLog)
+        if log.display:
+            log.write(line)
 
     def set_players(self, idxs: list[int]) -> None:
         self._playing = set(idxs)
@@ -384,7 +393,7 @@ class ZhiboTui(App):
         )
         interval = snapshot.get("poll_interval") or "-"
         poll_part = "● 检测中…" if snapshot.get("polling") else f"○ 间隔 {interval}s"
-        self.sub_title = f"第 {snapshot.get('poll_round', 0)} 轮 · {poll_part}"
+        self.sub_title = f"在线 {live} · 第 {snapshot.get('poll_round', 0)} 轮 · {poll_part}"
 
     # ---- 表格 ------------------------------------------------------------
 
@@ -729,7 +738,14 @@ class ZhiboTui(App):
         if self._modal_open():
             return
         log = self.query_one("#log", RichLog)
-        log.display = not log.display
+        if log.display:
+            log.display = False
+            return
+        log.clear()
+        for line in self._log_lines:
+            log.write(line)
+        log.display = True
+        log.scroll_end(animate=False)
 
     def action_refresh(self) -> None:
         if self._modal_open():
