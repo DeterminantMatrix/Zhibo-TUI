@@ -94,7 +94,8 @@ async def test_tui_renders_snapshot_and_bindings():
         await pilot.pause()
         assert bridge.started
         table = app.query_one("#streamTable", DataTable)
-        assert table.row_count == 2
+        # 2 个数据行 + 开播/未开播之间的分隔行。
+        assert table.row_count == 3
         # 快照进了日志面板。
         assert any("假日志一行" in "".join(str(s) for s in log.lines)
                    for log in [app.query_one("#log", RichLog)])
@@ -121,10 +122,11 @@ async def test_tui_renders_snapshot_and_bindings():
         await pilot.press("escape")
         app.query_one("#search", Input).value = "北风"
         await pilot.pause()
+        # 只有未开播行 → 无分隔行。
         assert table.row_count == 1
         app.query_one("#search", Input).value = ""
         await pilot.pause()
-        assert table.row_count == 2
+        assert table.row_count == 3
 
         # 播放状态回调刷新状态列（不抛异常即可）。
         app.set_player(1)
@@ -148,7 +150,7 @@ async def test_tui_tag_filter_and_lifecycle():
         assert table.row_count == 1
         app.on_tabs_tab_activated(Tabs.TabActivated(tabs=tabs, tab=Tab("全部", id="tag-0")))
         await pilot.pause()
-        assert table.row_count == 2
+        assert table.row_count == 3
 
         # 其余行操作转发给桥。
         await pilot.pause()

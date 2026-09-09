@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from rich.cells import cell_len
 from rich.markup import escape
 from rich.text import Text
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static, Tab, Tabs
 
@@ -42,7 +43,10 @@ def _status_cell(row: dict, playing: bool) -> Text:
 
 
 class DetailScreen(ModalScreen):
-    """详情弹层（只读；编辑事务在后续阶段加入）。"""
+    """详情弹层（只读；编辑事务在后续阶段加入）。
+
+    用两列 DataTable 呈现，彻底避免中文 label 的对齐错位。
+    """
 
     BINDINGS = [
         Binding("escape", "dismiss_screen", "返回"),
@@ -55,30 +59,62 @@ class DetailScreen(ModalScreen):
         background: $background 60%;
     }
     #detailBox {
-        width: 72;
-        height: auto;
+        width: 92;
         max-height: 82%;
-        padding: 1 2;
         border: round $accent;
         background: $surface;
+        padding: 1;
+        overflow: auto;
+    }
+    #detailTable {
+        height: auto;
+        border: none;
+        background: $surface;
+    }
+    #detailHint {
+        margin-top: 1;
+        color: $text-muted;
     }
     """
+
+    VALUE_CLIP = 64
 
     def __init__(self, detail: dict) -> None:
         super().__init__()
         self._detail = detail
 
     def compose(self) -> ComposeResult:
-        body = Text()
-        body.append(self._detail.get("title", "详情"), style="bold")
-        body.append("\n\n")
+        with Vertical(id="detailBox"):
+            yield DataTable(id="detailTable", show_cursor=False, zebra_stripes=True)
+            yield Static("按 Esc 返回；编辑功能将在后续阶段加入", id="detailHint")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#detailTable", DataTable)
+        table.border_title = self._detail.get("title", "详情")
+        table.add_column("字段", key="field", width=14)
+        table.add_column("内容", key="value", width=64)
         for row in self._detail.get("rows", []):
-            body.append(f"{row['label']:<10}".ljust(12))
             tone = _TONE_STYLE.get(row.get("tone", "normal"), "")
-            value = row.get("value", "")
-            body.append(value + "\n", style=tone or "")
-        body.append("\n按 Esc 返回；编辑功能将在后续阶段加入", style="dim")
-        yield Static(body, id="detailBox")
+            value = self._clip(row.get("value", ""), self.VALUE_CLIP)
+            table.add_row(
+                Text(row.get("label", ""), style="bold"),
+                Text(value, style=tone) if tone else Text(value),
+            )
+
+    @staticmethod
+    def _clip(text: str, limit: int) -> str:
+        """按显示宽度截断（CJK 一格一字宽），超出补省略号。"""
+        text = str(text or "")
+        if cell_len(text) <= limit:
+            return text
+        out = ""
+        width = 0
+        for ch in text:
+            width += cell_len(ch)
+            if width > limit - 2:
+                break
+            out += ch
+        return out + "…"
 
     def action_dismiss_screen(self) -> None:
         self.dismiss()
@@ -91,7 +127,8 @@ class ZhiboTui(App):
 
     CSS = """
     * {
-        scrollbar-size: 1 1;
+        scrollbar-size-horizontal: 1;
+        scrollbar-size-vertical: 1;
     }
     #filterBar {
         height: auto;
@@ -100,6 +137,10 @@ class ZhiboTui(App):
         width: 1fr;
         border: none;
         padding: 0;
+    }
+    #liveCount {
+        width: auto;
+        margin: 0 1 0 0;
     }
     #search {
         width: 36;
@@ -123,6 +164,19 @@ class ZhiboTui(App):
         padding: 0 1;
     }
     """
+
+    # 列序（用户定稿）：状态 | 标签 | 平台 | 主播 | 标题 | 画质 | 插件 | 检测
+    # 固定列宽：标题超出即截断，整表不再出现横向滚动。
+    TABLE_COLUMNS = (
+        ("status", "状态", 4),
+        ("tags", "标签", 12),
+        ("platform", "平台", 8),
+        ("name", "主播", 12),
+        ("title", "标题", 19),
+        ("quality", "画质", 8),
+        ("plugin", "插件", 10),
+        ("last_check", "检测", 9),
+    )
 
     BINDINGS = [
         Binding("q", "quit", "退出"),
@@ -168,6 +222,7 @@ class ZhiboTui(App):
         yield Header(show_clock=True)
         with Horizontal(id="filterBar"):
             yield Tabs(id="tagTabs")
+            yield Static("", id="liveCount")
             yield Input(placeholder="/ 搜索主播、平台、标题…", id="search")
         with Horizontal(id="mainArea"):
             yield DataTable(id="streamTable", cursor_type="row", zebra_stripes=True)
@@ -176,18 +231,8 @@ class ZhiboTui(App):
 
     async def on_mount(self) -> None:
         table = self.query_one("#streamTable", DataTable)
-        # 列序（用户定稿）：状态 | 主播 | 标题 | 平台 | 标签 | 画质 | 插件 | 检测
-        for key, label in (
-            ("status", "状态"),
-            ("name", "主播"),
-            ("title", "标题"),
-            ("platform", "平台"),
-            ("tags", "标签"),
-            ("quality", "画质"),
-            ("plugin", "插件"),
-            ("last_check", "检测"),
-        ):
-            self._col_keys[key] = table.add_column(label, key=key)
+        for key, label, width in self.TABLE_COLUMNS:
+            self._col_keys[key] = table.add_column(label, key=key, width=width)
         log = self.query_one("#log", RichLog)
         log.border_title = "运行日志"
 
@@ -222,11 +267,14 @@ class ZhiboTui(App):
         self._tags = snapshot.get("tags") or ["全部"]
         self._rebuild_tabs(self._tags)
         self._rebuild_table()
-        online = sum(1 for r in self._rows if r.get("live"))
-        total = len(self._rows)
+        live = sum(1 for r in self._rows if r.get("live"))
+        # 标签栏旁只标正在开播数（用户要求：不显示总数）。
+        self.query_one("#liveCount", Static).update(
+            Text(f"● {live}", style="bold green")
+        )
         interval = snapshot.get("poll_interval") or "-"
         poll_part = "● 检测中…" if snapshot.get("polling") else f"○ 间隔 {interval}s"
-        self.sub_title = f"在线 {online} / 总计 {total} · 第 {snapshot.get('poll_round', 0)} 轮 · {poll_part}"
+        self.sub_title = f"第 {snapshot.get('poll_round', 0)} 轮 · {poll_part}"
 
     # ---- 表格 ------------------------------------------------------------
 
@@ -251,24 +299,38 @@ class ZhiboTui(App):
             self._tag = "全部"
         tabs.active = f"tag-{tags.index(self._tag)}"
 
+    @staticmethod
+    def _clip(text: str, limit: int) -> str:
+        """按字符数截断标题类内容（中文一格一字，10~15 字观感）。"""
+        text = str(text or "")
+        return text if len(text) <= limit else text[:limit] + "…"
+
     def _rebuild_table(self) -> None:
         table = self.query_one("#streamTable", DataTable)
         cursor = table.cursor_row
         table.clear()
         self._row_keys.clear()
+        prev_live: bool | None = None
+        sep = 0
         for row in self._visible_rows():
-            row_key = table.add_row(
+            is_live = bool(row.get("live"))
+            if prev_live is True and not is_live:
+                # 开播与未开播分组之间的黑色空行（终端行高固定，无法做半行）。
+                sep += 1
+                table.add_row(*[Text("") for _ in self._col_keys], key=f"sep-{sep}")
+            cells = (
                 _status_cell(row, row["idx"] == self._playing_idx),
-                row.get("name", "-"),
-                row.get("title") or "-",
-                row.get("platform", "-"),
                 "、".join(row.get("tags") or []) or "-",
+                row.get("platform", "-"),
+                row.get("name", "-"),
+                self._clip(row.get("title") or "-", 12),
                 row.get("configured_quality") or row.get("quality") or "-",
                 row.get("configured_plugin") or row.get("plugin") or "-",
                 row.get("last_check", "-"),
-                key=row["idx"],
             )
+            row_key = table.add_row(*cells, key=row["idx"])
             self._row_keys[row["idx"]] = row_key
+            prev_live = is_live
         if table.row_count:
             table.move_cursor(row=min(cursor, table.row_count - 1))
 
@@ -287,7 +349,9 @@ class ZhiboTui(App):
         if not table.row_count:
             return None
         row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
-        return row_key.value if row_key is not None else None
+        if row_key is None or not isinstance(row_key.value, int):
+            return None  # 分隔行等非数据行
+        return row_key.value
 
     # ---- 交互动作 ---------------------------------------------------------
 
@@ -297,7 +361,11 @@ class ZhiboTui(App):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """表格内按 Enter 触发行选中 = 播放。"""
         row_key = event.row_key
-        if row_key is not None and row_key.value is not None and self._bridge is not None:
+        if (
+            row_key is not None
+            and isinstance(row_key.value, int)
+            and self._bridge is not None
+        ):
             self._bridge.play(row_key.value)
 
     def action_play(self) -> None:
