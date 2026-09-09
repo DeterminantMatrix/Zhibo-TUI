@@ -160,23 +160,26 @@ class ZhiboTui(App):
         width: 1fr;
         height: 1fr;
         border: round $accent;
+        overflow-x: hidden;
     }
     #log {
         width: 34;
         border: round $accent 30%;
         padding: 0 1;
+        overflow-x: hidden;
     }
     """
 
     # 列序（用户定稿）：状态 | 标签 | 平台 | 主播 | 标题 | 画质 | 插件 | 检测
     # cell_padding=0（间距已含在列宽内）：列之间无缝，分隔行的灰线才能连通。
+    # 列宽总和（84）刻意收窄到常规窗口内，横向滚动条不出现。
     TABLE_COLUMNS = (
-        ("status", "状态", 6),
-        ("tags", "标签", 8),
-        ("platform", "平台", 10),
-        ("name", "主播", 14),
+        ("status", "状态", 5),
+        ("tags", "标签", 7),
+        ("platform", "平台", 9),
+        ("name", "主播", 13),
         ("title", "标题", 21),
-        ("quality", "画质", 5),
+        ("quality", "画质", 6),
         ("plugin", "插件", 12),
         ("last_check", "检测", 11),
     )
@@ -325,7 +328,9 @@ class ZhiboTui(App):
             return
         await tabs.clear()
         for i, tag in enumerate(tags):
-            await tabs.add_tab(Tab(f"{tag} {counts[tag]}", id=f"tag-{i}"))
+            label = Text(tag)
+            label.append(f" {counts[tag]}", style="green")
+            await tabs.add_tab(Tab(label, id=f"tag-{i}"))
         if self._tag not in tags:
             self._tag = "全部"
         tabs.active = f"tag-{tags.index(self._tag)}"
