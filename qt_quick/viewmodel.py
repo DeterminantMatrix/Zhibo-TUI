@@ -1,4 +1,4 @@
-"""兼容层：视图模型纯函数已迁至 zhibo.viewmodel（webui 共用）。"""
+"""兼容层：视图模型纯函数已迁至 zhibo.viewmodel。"""
 from zhibo.viewmodel import (  # noqa: F401
     PLATFORM_DISPLAY_NAMES,
     SORTABLE_COLUMNS,

@@ -1,6 +1,6 @@
 """TUI ↔ zhibo.monitor 桥接层。
 
-与 webui 时代的线程桥不同：Textual 本身就是 asyncio，监控服务直接跑在
+Textual 本身就是 asyncio，监控服务直接跑在
 UI 的事件循环里，回调可以安全地同步更新界面。播放器状态同样只在本
 循环内访问。UI 通过三个回调接收事件：on_snapshot / on_log / on_players。
 """
@@ -48,7 +48,7 @@ _UPDATE_EXECUTABLE_TARGETS = {
 }
 
 
-# ---- 事务确认页的纯展示格式化（自 webui/Qt 移植；value 一律先脱敏） ------
+# ---- 事务确认页的纯展示格式化（value 一律先脱敏） ------
 
 EDIT_LABELS = {
     "enabled": "启用",
