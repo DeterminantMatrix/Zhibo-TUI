@@ -27,11 +27,14 @@ python -m pip install -r requirements.txt
 .venv\Scripts\python.exe -m webui
 ```
 
+旧版 Qt Quick 界面保留为备用入口：双击 `qt_quick\start_native.vbs`，或 `.venv\Scripts\python.exe -m qt_quick`（需要先 `python -m pip install -r qt_quick\requirements-qt.txt` 安装 PySide6）。
+
 ## 目录结构
 
 ```text
 ZHIBO/
-├── webui/               # pywebview 前端（唯一入口，双击 start_web.vbs）
+├── webui/               # pywebview 前端（主入口，双击 start_web.vbs）
+├── qt_quick/            # 旧版 Qt Quick/QML 前端（备用，双击 start_native.vbs）
 ├── zhibo/               # 后端核心包
 │   ├── monitor.py       #   轮询调度、状态机、平台熔断退避
 │   ├── config.py        #   followers.csv / settings.csv 持久化与校验
