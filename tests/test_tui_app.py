@@ -575,3 +575,26 @@ async def test_tui_action_bar_layout():
             if len(app.screen_stack) == 1:
                 break
         assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_tui_quality_column_enter_opens_picker():
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+        table = app.query_one("#streamTable", DataTable)
+        table.focus()
+        table.move_cursor(row=0, column=5)  # 画质列
+        await pilot.pause()
+        await pilot.press("enter")
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 2:
+                break
+        assert len(app.screen_stack) == 2  # 选择框打开而不是播放
+        screen = app.screen
+        assert "高清" in [v for _l, v in screen._options]
+        screen._on_pick("高清")
+        await pilot.pause()
+        assert bridge.quality_set == (0, "高清")

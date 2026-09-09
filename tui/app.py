@@ -60,9 +60,9 @@ class DetailScreen(ModalScreen):
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss_screen", "关闭"),
+        Binding("escape", "dismiss_screen", "关闭", show=False),
         Binding("d", "dismiss_screen", "关闭", show=False),
-        Binding("e", "edit", "编辑"),
+        Binding("e", "edit", "编辑", show=False),
     ]
 
     CSS = """
@@ -91,15 +91,19 @@ class DetailScreen(ModalScreen):
 
     VALUE_CLIP = 64
 
-    def __init__(self, detail: dict, idx: int) -> None:
+    def __init__(self, detail: dict, idx: int, bridge=None) -> None:
         super().__init__()
         self._detail = detail
         self._idx = idx
+        self._bridge = bridge
 
     def compose(self) -> ComposeResult:
         with Vertical(id="detailBox"):
             yield DataTable(id="detailTable", show_cursor=False, zebra_stripes=True)
-            yield Static("按 Esc 返回 · 按 e 进入编辑", id="detailHint")
+            with Horizontal(classes="button-row"):
+                yield Button("编辑", id="dEdit", variant="primary")
+                yield Button("删除", id="dDelete")
+                yield Button("返回", id="dBack")
 
     def on_mount(self) -> None:
         table = self.query_one("#detailTable", DataTable)
@@ -117,6 +121,26 @@ class DetailScreen(ModalScreen):
     def action_edit(self) -> None:
         self.dismiss()
         self.app.open_edit(self._idx)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "dEdit":
+            self.action_edit()
+        elif event.button.id == "dBack":
+            self.dismiss()
+        elif event.button.id == "dDelete":
+            await self._delete_flow()
+
+    async def _delete_flow(self) -> None:
+        if self._bridge is None:
+            return
+        ok, text = await self._bridge.preview_delete(self._idx)
+        if not ok:
+            self.app.log_line(text)
+            return
+        self.dismiss()
+        self.app.push_screen(
+            ConfirmScreen("确认删除直播间？", text, "确认删除", self._bridge.confirm_delete)
+        )
 
     @staticmethod
     def _clip(text: str, limit: int) -> str:
@@ -205,6 +229,19 @@ class ZhiboTui(App):
     }
     #actionBar .corner {
         text-style: bold;
+        background: #d78700;
+        color: #000000;
+    }
+    #detailBox .button-row {
+        height: 1;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+    #detailBox .button-row Button {
+        min-width: 0;
+        height: 1;
+        border: none;
+        padding: 0 2;
     }
     #abSpacer {
         width: 1fr;
@@ -547,20 +584,18 @@ class ZhiboTui(App):
             self._bridge.play(idx)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """表格内按 Enter 触发行选中 = 播放/停止切换。"""
+        """表格内按 Enter / 点击已高亮单元格：画质和插件列弹选择框，其余播放切换。"""
         if self._modal_open():
             return
         table = self.query_one("#streamTable", DataTable)
-        if table.cursor_coordinate.column in self._PICK_COLUMNS:
-            return  # 画质/插件列上按 Enter = 打开选择框
+        column = table.cursor_coordinate.column
         row_key = event.row_key
-        if (
-            row_key is None
-            or not isinstance(row_key.value, int)
-            or self._bridge is None
-        ):
+        if row_key is None or not isinstance(row_key.value, int) or self._bridge is None:
             return
         idx = row_key.value
+        if column in self._PICK_COLUMNS:
+            self._open_field_picker(idx, self._PICK_COLUMNS[column])
+            return
         if idx in self._playing:
             self._bridge.stop_one(idx)
         else:
@@ -578,7 +613,7 @@ class ZhiboTui(App):
             return
         detail = self._bridge.get_detail(idx)
         if detail is not None:
-            self.push_screen(DetailScreen(detail, idx=idx))
+            self.push_screen(DetailScreen(detail, idx=idx, bridge=self._bridge))
 
     def action_edit(self) -> None:
         if self._modal_open():
