@@ -740,8 +740,10 @@ class ZhiboTui(App):
     def action_hide_to_tray(self) -> None:
         from tui.tray import hide_console
 
-        self.log_line("已隐藏到托盘；监控继续运行，点击托盘图标恢复")
-        hide_console()
+        if hide_console():
+            self.log_line("已隐藏到托盘；监控继续运行，点击托盘图标恢复")
+        else:
+            self.log_line("隐藏失败：当前终端窗口无法隐藏")
 
     async def shutdown_from_tray(self) -> None:
         """托盘线程经 call_from_thread 调用：先优雅停止监控再退出。"""

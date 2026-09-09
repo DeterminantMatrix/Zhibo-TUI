@@ -29,8 +29,35 @@ def console_hwnd() -> int | None:
     return hwnd or None
 
 
+_host_hwnd: int | None = None
+
+
+def capture_host_window() -> bool:
+    """记录启动时的前台窗口。
+
+    在 Windows Terminal 里运行时，GetConsoleWindow 返回的是 ConPTY
+    的隐藏宿主（对它 ShowWindow 毫无效果）；真正可见的是 WT 窗口。
+    启动瞬间 WT 必然在前台，记下它的句柄，隐藏/显示都作用于它。
+    """
+    global _host_hwnd
+    hwnd = None
+    if os.name == "nt":
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow() or None
+        except Exception:
+            hwnd = None
+    if hwnd is None:
+        hwnd = console_hwnd()
+    _host_hwnd = hwnd
+    return hwnd is not None
+
+
+def _target_hwnd() -> int | None:
+    return _host_hwnd or console_hwnd()
+
+
 def hide_console() -> bool:
-    hwnd = console_hwnd()
+    hwnd = _target_hwnd()
     if not hwnd:
         return False
     ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
@@ -38,7 +65,7 @@ def hide_console() -> bool:
 
 
 def show_console() -> bool:
-    hwnd = console_hwnd()
+    hwnd = _target_hwnd()
     if not hwnd:
         return False
     user32 = ctypes.windll.user32

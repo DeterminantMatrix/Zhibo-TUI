@@ -39,12 +39,14 @@ def main(argv: list[str] | None = None) -> int:
 
     from tui.app import ZhiboTui
     from tui.tray import (
-        TrayController,
+        capture_host_window,
         hide_console,
         intercept_close_button,
         show_console,
+        TrayController,
     )
 
+    capture_host_window()  # 记录 WT/控制台宿主窗口，供隐藏到托盘使用
     app = ZhiboTui(startup_notes=startup_notes, smoke=smoke)
 
     tray = None
