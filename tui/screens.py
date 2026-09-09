@@ -512,21 +512,16 @@ class ImportScreen(ModalBase):
 
 
 class UpdateCenterScreen(ModalBase):
-    """更新中心：组件列表 + 详情/执行 + 进度条。"""
+    """更新中心：组件表格（名称/当前版本/最新版本/是否需要更新）+ 详情与操作。"""
 
     CSS = """
-    #ucMain {
+    #ucTable {
         height: 1fr;
-        min-height: 16;
-    }
-    #ucList {
-        width: 34;
+        min-height: 12;
         border: round $accent 30%;
-        background: $surface;
     }
-    #ucDetail {
-        width: 1fr;
-        padding: 0 1;
+    #ucDetailText {
+        margin-top: 1;
     }
     #ucContent {
         height: 6;
@@ -541,21 +536,30 @@ class UpdateCenterScreen(ModalBase):
     }
     """
 
+    # 表格列（用户定稿）：组件名称 | 当前版本 | 最新版本 | 是否需要更新
+    NEED_LABEL = {
+        "checking": ("检查中…", "yellow"),
+        "current": ("已是最新", "green"),
+        "install": ("需要安装", "cyan"),
+        "update": ("需要更新", "yellow"),
+        "unknown": ("检查失败", "red"),
+        "failed": ("更新失败", "red"),
+    }
+
     def __init__(self, bridge: MonitorBridge) -> None:
         super().__init__()
         self._bridge = bridge
         self._selected = "mpv"
         self._busy = False
         self._items: list[dict] = []
+        self._col_keys: dict[str, object] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="panel"):
             yield Static("更新中心（打开后自动检查全部组件远端版本）", classes="panel-title")
-            with Horizontal(id="ucMain"):
-                yield OptionList(id="ucList")
-                with Vertical(id="ucDetail"):
-                    yield Static("", id="ucDetailText")
-                    yield TextArea(id="ucContent")
+            yield DataTable(id="ucTable", cursor_type="row", zebra_stripes=True)
+            yield Static("", id="ucDetailText")
+            yield TextArea(id="ucContent")
             yield Static("", classes="form-error")
             with Vertical(id="ucProgress"):
                 yield ProgressBar(total=100.0, show_eta=False, id="ucBar")
@@ -565,13 +569,22 @@ class UpdateCenterScreen(ModalBase):
                 yield Button("关闭", id="close")
 
     def on_mount(self) -> None:
+        table = self.query_one("#ucTable", DataTable)
+        for key, label, width in (
+            ("name", "组件名称", 18),
+            ("version", "版本号", 14),
+            ("remote", "最新版本", 14),
+            ("need", "是否需要更新", 14),
+        ):
+            self._col_keys[key] = table.add_column(label, key=key, width=width)
+        self._content = self.query_one("#ucContent", TextArea)
+        self._content.display = False
+        self.query_one("#ucProgress").display = False
+
         bridge = self._bridge
         bridge.on_update_items = self._on_items
         bridge.on_progress = self._on_progress
         bridge.on_update_done = self._on_done
-        self._content = self.query_one("#ucContent", TextArea)
-        self._content.display = False
-        self.query_one("#ucProgress").display = False
         if bridge.update_items:
             self._on_items(bridge.update_items)
         bridge.load_update_center()
@@ -585,41 +598,55 @@ class UpdateCenterScreen(ModalBase):
         if bridge.on_update_done is self._on_done:
             bridge.on_update_done = None
 
+    @staticmethod
+    def _need_cell(item: dict) -> Text:
+        kind = item.get("kind", "")
+        status = str(item.get("updateStatus") or "unchecked")
+        if status in UpdateCenterScreen.NEED_LABEL:
+            text, tone = UpdateCenterScreen.NEED_LABEL[status]
+        elif kind == "runtime":
+            text, tone = "运行环境", "dim"
+        elif kind == "configuration":
+            text, tone = "本地配置", "dim"
+        elif kind == "credential":
+            text, tone = "本地凭据", "dim"
+        else:
+            text, tone = "未检查", "dim"
+        return Text(text, style=tone)
+
     def _on_items(self, items: list[dict]) -> None:
         if not self._alive():
             return
         self._items = items
-        option_list = self.query_one("#ucList", OptionList)
-        highlighted = option_list.highlighted
-        option_list.clear_options()
+        table = self.query_one("#ucTable", DataTable)
+        cursor = table.cursor_row
+        table.clear()
         for item in items:
-            status = str(item.get("updateStatus") or "")
-            glyph = {
-                "checking": "…", "current": "✓", "install": "↑", "update": "↑",
-                "unknown": "!", "failed": "!",
-            }.get(status, "")
-            option_list.add_option(
-                Option(f"{item.get('label', item.get('value'))} {glyph}", id=item["value"])
+            latest = str(item.get("remoteVersion") or "-")
+            table.add_row(
+                Text(item.get("label", item.get("value", ""))),
+                Text(str(item.get("version", "-"))),
+                Text(latest),
+                self._need_cell(item),
+                key=item.get("value"),
             )
-        if highlighted is not None and 0 <= highlighted < option_list.option_count:
-            option_list.highlighted = highlighted
+        if table.row_count:
+            table.move_cursor(row=min(cursor, table.row_count - 1))
         self._refresh_detail()
 
     def _refresh_detail(self) -> None:
-        item = next(
-            (i for i in self._items if i.get("value") == self._selected), None
-        )
+        item = next((i for i in self._items if i.get("value") == self._selected), None)
         if item is None:
             return
         action = self.query_one("#ucAction", Button)
-        action.label = f"{item.get('actionLabel', '操作')} {item.get('label', '')}"
+        action.label = f"{item.get('actionLabel', '操作')} · {item.get('label', '')}"
         action.disabled = not bool(item.get("actionEnabled"))
         body = Text()
-        body.append(item.get("label", "") + "\n", style="bold")
-        body.append(item.get("description", "") + "\n\n")
-        body.append(f"当前版本：{item.get('version', '-')}\n")
-        body.append(f"来源：{item.get('source', '-')}\n")
-        body.append(f"上次更新：{item.get('lastUpdated', '-')}\n")
+        body.append(item.get("description", "") + "\n", style="dim")
+        body.append(f"来源：{item.get('source', '-')}")
+        if item.get("restartRequired"):
+            body.append("（更新后需重启程序）", style="yellow")
+        body.append("\n")
         hint = item.get("updateHint", "")
         if hint:
             tone = ""
@@ -631,9 +658,9 @@ class UpdateCenterScreen(ModalBase):
         self.query_one("#ucDetailText", Static).update(body)
         self._content.display = item.get("value") in {"fs1", "bilibili_cookie"}
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option.id:
-            self._selected = str(event.option.id)
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.row_key is not None and event.row_key.value:
+            self._selected = str(event.row_key.value)
             self._refresh_detail()
 
     def _on_progress(self, kind: str, value: float, text: str) -> None:
@@ -750,13 +777,13 @@ class DownloadScreen(ModalBase):
         if option_list.option_count and option_list.highlighted is None:
             option_list.highlighted = 0
         self.query_one("#dlStart", Button).disabled = False
-        self._busy = False  # 格式就绪，解除 dlLoad 期间的占用
+        self._busy = False
 
     def _on_progress(self, kind: str, value: float, text: str) -> None:
         if kind != "download" or not self._alive():
             return
         if value >= 100.0:
-            self._busy = False  # 下载结束（含失败后重新开始）
+            self._busy = False
         self.query_one("#dlProgress").display = True
         bar = self.query_one("#dlBar", ProgressBar)
         bar.update(progress=max(0.0, min(100.0, value)))

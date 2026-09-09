@@ -420,20 +420,22 @@ async def test_tui_settings_proxy_import_delete_flows():
 
 @pytest.mark.asyncio
 async def test_tui_update_center_flow():
-    from textual.widgets import Button, OptionList, ProgressBar
+    from textual.widgets import Button, DataTable, ProgressBar
 
     bridge = FakeBridge()
     app = ZhiboTui(bridge=bridge)
     async with app.run_test(size=(130, 34)) as pilot:
         await pilot.pause()
         await pilot.press("u")
+        table = None
         for _ in range(30):
             await pilot.pause(0.05)
-            if len(app.screen_stack) == 2 and app.screen.query_one("#ucList", OptionList).option_count == 2:
-                break
+            if len(app.screen_stack) == 2:
+                table = app.screen.query_one("#ucTable", DataTable)
+                if table.row_count == 2:
+                    break
         assert len(app.screen_stack) == 2
-        option_list = app.screen.query_one("#ucList", OptionList)
-        assert option_list.option_count == 2
+        assert table is not None and table.row_count == 2
 
         # 选中"检查更新"类组件并触发。
         app.screen.query_one("#ucAction", Button).press()
