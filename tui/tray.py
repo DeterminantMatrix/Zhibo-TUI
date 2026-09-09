@@ -10,6 +10,7 @@ import ctypes
 import os
 import threading
 import ctypes.wintypes
+from pathlib import Path
 
 SW_HIDE = 0
 SW_SHOW = 5

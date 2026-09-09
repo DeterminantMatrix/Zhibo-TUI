@@ -49,15 +49,19 @@ def main(argv: list[str] | None = None) -> int:
 
     tray = None
     if not smoke:
-        tray = TrayController(
-            icon_path=PROJECT_ROOT / "tui" / "assets" / "tray.ico",
-            tooltip="直播监控工具 · TUI",
-            on_show=show_console,
-            on_hide=hide_console,
-            on_quit=lambda: app.call_from_thread(app.shutdown_from_tray),
-        )
-        tray.start()
-        intercept_close_button()
+        # 托盘任何环节失败都只降级为"无托盘"，绝不能挡住监控主程序。
+        try:
+            tray = TrayController(
+                icon_path=PROJECT_ROOT / "tui" / "assets" / "tray.ico",
+                tooltip="直播监控工具 · TUI",
+                on_show=show_console,
+                on_hide=hide_console,
+                on_quit=lambda: app.call_from_thread(app.shutdown_from_tray),
+            )
+            tray.start()
+            intercept_close_button()
+        except Exception:
+            tray = None
 
     def handle_command(command: str) -> None:
         if command == COMMAND_SHOW:

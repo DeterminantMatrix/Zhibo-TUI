@@ -598,3 +598,23 @@ async def test_tui_quality_column_enter_opens_picker():
         screen._on_pick("高清")
         await pilot.pause()
         assert bridge.quality_set == (0, "高清")
+
+
+def test_tray_controller_constructs_and_imports():
+    """托盘模块可导入、控制器可构造（防 NameError 之类的低级崩溃回归）。"""
+    from pathlib import Path
+
+    from tui.tray import TrayController, console_hwnd, hide_console
+
+    controller = TrayController(
+        icon_path=Path("nonexistent.ico"),
+        tooltip="test",
+        on_show=lambda: None,
+        on_hide=lambda: None,
+        on_quit=lambda: None,
+    )
+    assert controller.available is False  # 未 start
+    controller.start()  # 图标文件不存在 → 降级为不可用，不抛异常
+    controller.stop()
+    assert isinstance(console_hwnd() is None, bool)
+    assert isinstance(hide_console(), bool)

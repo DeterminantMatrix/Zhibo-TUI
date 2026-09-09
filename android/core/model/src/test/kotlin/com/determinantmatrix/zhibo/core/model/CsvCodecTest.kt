@@ -36,7 +36,7 @@ class CsvCodecTest {
 
     @Test
     fun `python json escapes control chars like python`() {
-        val obj = JsonObject(mapOf("s" to JsonPrimitive("ab".replace("ab", "ab"))))
+        val obj = JsonObject(mapOf("s" to JsonPrimitive("a\u0001b")))
         assertEquals("{\"s\": \"a\\u0001b\"}", PythonJson.dumps(obj))
     }
 }
