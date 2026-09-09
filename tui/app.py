@@ -169,16 +169,16 @@ class ZhiboTui(App):
     """
 
     # 列序（用户定稿）：状态 | 标签 | 平台 | 主播 | 标题 | 画质 | 插件 | 检测
-    # 固定列宽：标题超出即截断，整表不再出现横向滚动。
+    # cell_padding=0（间距已含在列宽内）：列之间无缝，分隔行的灰线才能连通。
     TABLE_COLUMNS = (
-        ("status", "状态", 4),
-        ("tags", "标签", 6),
-        ("platform", "平台", 8),
-        ("name", "主播", 12),
-        ("title", "标题", 19),
-        ("quality", "画质", 8),
-        ("plugin", "插件", 10),
-        ("last_check", "检测", 9),
+        ("status", "状态", 6),
+        ("tags", "标签", 8),
+        ("platform", "平台", 10),
+        ("name", "主播", 14),
+        ("title", "标题", 21),
+        ("quality", "画质", 10),
+        ("plugin", "插件", 12),
+        ("last_check", "检测", 11),
     )
 
     BINDINGS = [
@@ -233,7 +233,10 @@ class ZhiboTui(App):
         yield Footer()
 
     async def on_mount(self) -> None:
-        table = self.query_one("#streamTable", DataTable)
+        table = self.query_one(
+            "#streamTable", DataTable
+        )
+        table.cell_padding = 0  # 间距已含在列宽内；分隔灰线靠无缝单元格连通
         for key, label, width in self.TABLE_COLUMNS:
             self._col_keys[key] = table.add_column(label, key=key, width=width)
         log = self.query_one("#log", RichLog)
@@ -291,7 +294,20 @@ class ZhiboTui(App):
         ]
 
     def _rebuild_tabs(self, tags: list[str]) -> None:
-        tabs = self.query_one("#tagTabs", Tabs)
+        # clear/add 是异步完成的，同步连用会撞出"同 ID widget 已存在"；
+        # 放进 exclusive worker，await 清理完成后再逐个加入。
+        self.run_worker(
+            self._rebuild_tabs_worker(tags),
+            group="tag-tabs",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _rebuild_tabs_worker(self, tags: list[str]) -> None:
+        try:
+            tabs = self.query_one("#tagTabs", Tabs)
+        except Exception:
+            return  # 界面已关闭
         live = sum(1 for r in self._rows if r.get("live"))
         # 每个标签一个该标签下正在开播的数量；"全部"即总开播数。
         counts = {}
@@ -307,9 +323,9 @@ class ZhiboTui(App):
         desired = [(f"tag-{i}", f"{tag} {counts[tag]}") for i, tag in enumerate(tags)]
         if [(t.id, str(t.label)) for t in tabs.query(Tab)] == desired:
             return
-        tabs.clear()
+        await tabs.clear()
         for i, tag in enumerate(tags):
-            tabs.add_tab(Tab(f"{tag} {counts[tag]}", id=f"tag-{i}"))
+            await tabs.add_tab(Tab(f"{tag} {counts[tag]}", id=f"tag-{i}"))
         if self._tag not in tags:
             self._tag = "全部"
         tabs.active = f"tag-{tags.index(self._tag)}"
