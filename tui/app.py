@@ -106,12 +106,16 @@ class ZhiboTui(App):
         width: 36;
         margin: 0 1 0 0;
     }
+    #mainArea {
+        height: 1fr;
+    }
     #streamTable {
+        width: 1fr;
         height: 1fr;
         border: round $accent;
     }
     #log {
-        height: 8;
+        width: 42;
         border: round $accent 30%;
         padding: 0 1;
     }
@@ -149,18 +153,20 @@ class ZhiboTui(App):
                 id="tagTabs",
             )
             yield Input(placeholder="/ 搜索主播、平台、标题…", id="search")
-        yield DataTable(id="streamTable", cursor_type="row", zebra_stripes=True)
-        yield RichLog(id="log", markup=True, wrap=True)
+        with Horizontal(id="mainArea"):
+            yield DataTable(id="streamTable", cursor_type="row", zebra_stripes=True)
+            yield RichLog(id="log", markup=True, wrap=True)
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#streamTable", DataTable)
+        # 列序（用户定稿）：状态 | 主播 | 标题 | 平台 | 标签 | 画质 | 插件 | 检测
         for key, label in (
             ("status", "状态"),
             ("name", "主播"),
+            ("title", "标题"),
             ("platform", "平台"),
             ("tags", "标签"),
-            ("title", "标题"),
             ("quality", "画质"),
             ("plugin", "插件"),
             ("last_check", "检测"),
@@ -168,6 +174,7 @@ class ZhiboTui(App):
             self._col_keys[key] = table.add_column(label, key=key)
         self._rebuild_table()
         log = self.query_one("#log", RichLog)
+        log.border_title = "运行日志"
         log.write("[b]ZHIBO TUI 骨架已启动[/b]（假数据，未接监控核心）")
         log.write("键位：enter 播放 · d 详情 · / 搜索 · r 刷新 · l 日志 · t 主题 · q 退出")
         self.log_line("模拟监控核心就绪，共 44 个关注项")
@@ -199,9 +206,9 @@ class ZhiboTui(App):
             row_key = table.add_row(
                 _status_cell(f),
                 f["name"],
+                f["title"] or "-",
                 f["platform"],
                 "、".join(f["tags"]),
-                f["title"] or "-",
                 f["quality"],
                 f["plugin"],
                 f["last_check"],
