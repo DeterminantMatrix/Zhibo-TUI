@@ -75,6 +75,13 @@ class ModalBase(ModalScreen):
         border: none;
         background: $surface-darken-1;
     }
+    .form-row CycleButton, .form-row CycleButton:focus {
+        min-width: 10;
+        height: 1;
+        border: none;
+        background: $surface-darken-1;
+        padding: 0 2;
+    }
     .button-row {
         height: 1;
         margin-top: 1;
@@ -362,6 +369,9 @@ class EditScreen(ModalBase):
             if len(self.app.screen_stack) > 1:
                 self.dismiss()
             return
+        if event.button.id == "enabledCycle":
+            self._enabled.cycle()
+            return
         if event.button.id == "pluginPick":
             options = [(p, p) for p in self._payload["pluginOptions"]]
             if self._plugin_value and all(v != self._plugin_value for _l, v in options):
@@ -449,6 +459,9 @@ class SettingsScreen(ModalBase):
         if event.button.id == "close":
             if len(self.app.screen_stack) > 1:
                 self.dismiss()
+            return
+        if event.button.id == "notifCycle":
+            self._notif.cycle()
             return
         if event.button.id != "save" or self._busy:
             return
