@@ -1,6 +1,6 @@
 """Desktop integration helper: mpv playback.
 
-托盘、通知和窗口管理由 webui 前端（pywebview + pystray）实现，
+托盘、通知和窗口管理由 Qt 前端（``qt_quick``）原生实现，
 这里只保留启动 mpv 播放进程的逻辑。
 """
 from __future__ import annotations

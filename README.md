@@ -1,15 +1,14 @@
 # Zhibo 直播监控
 
-一个基于 Python 与 pywebview（Windows 98 复古风格界面）的多平台直播监控工具。它按标签展示关注列表，定时检测开播状态，并支持一键用播放器打开直播流。
+一个基于 Python 与 Qt Quick/QML 的多平台直播监控工具。它按标签展示关注列表，定时检测开播状态，并支持一键用播放器打开直播流。
 
 ## 功能
 
 - 监控斗鱼、虎牙、抖音、B 站、Twitch、YouTube、小红书与 FS1 等直播源
 - 标签页、搜索和在线 / 离线 / 异常状态筛选
 - 多插件回退：streamlink、streamget、yt-dlp 与 FS1 专用插件
-- 开播 toast 通知（点击直接播放）、系统托盘、最小化隐藏、外部 mpv 播放
+- 开播通知、系统托盘、最小化隐藏、mpv 播放
 - 从直播间 URL 导入关注项，以及 YouTube 格式选择下载
-- 更新中心：自动检查并更新 mpv/ffmpeg/uosc/解析组件，管理 B站 Cookie 与 FS1 配置
 
 ## 安装与启动
 
@@ -19,22 +18,22 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip install -r qt_quick\requirements-qt.txt
 ```
 
-双击 `webui\start_web.vbs` 启动（通过 `pythonw.exe` 运行），也可以运行：
+双击 `qt_quick\start_native.vbs` 启动（通过 `pythonw.exe` 运行，不依赖 Windows Terminal），也可以运行：
 
 ```powershell
-.venv\Scripts\python.exe -m webui
+.venv\Scripts\python.exe -m qt_quick
 ```
 
-旧版 Qt Quick 界面保留为备用入口：双击 `qt_quick\start_native.vbs`，或 `.venv\Scripts\python.exe -m qt_quick`（需要先 `python -m pip install -r qt_quick\requirements-qt.txt` 安装 PySide6）。
+界面细节与快捷键见 [`qt_quick/README.md`](<D:/WPS SyncDisk/2.Tool/1.VibeCoding/ZHIBO/qt_quick/README.md>)。
 
 ## 目录结构
 
 ```text
 ZHIBO/
-├── webui/               # pywebview 前端（主入口，双击 start_web.vbs）
-├── qt_quick/            # 旧版 Qt Quick/QML 前端（备用，双击 start_native.vbs）
+├── qt_quick/            # Qt Quick/QML 前端（唯一入口，双击 start_native.vbs）
 ├── zhibo/               # 后端核心包
 │   ├── monitor.py       #   轮询调度、状态机、平台熔断退避
 │   ├── config.py        #   followers.csv / settings.csv 持久化与校验
