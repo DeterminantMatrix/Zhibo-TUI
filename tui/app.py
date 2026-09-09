@@ -125,6 +125,9 @@ class ZhiboTui(App):
 
     TITLE = "ZHIBO 直播监控"
 
+    # 用户要求隐藏底栏的 palette 提示（Ctrl+P 一并停用）。
+    ENABLE_COMMAND_PALETTE = False
+
     CSS = """
     * {
         scrollbar-size-horizontal: 1;
@@ -169,7 +172,7 @@ class ZhiboTui(App):
     # 固定列宽：标题超出即截断，整表不再出现横向滚动。
     TABLE_COLUMNS = (
         ("status", "状态", 4),
-        ("tags", "标签", 12),
+        ("tags", "标签", 6),
         ("platform", "平台", 8),
         ("name", "主播", 12),
         ("title", "标题", 19),
@@ -289,12 +292,24 @@ class ZhiboTui(App):
 
     def _rebuild_tabs(self, tags: list[str]) -> None:
         tabs = self.query_one("#tagTabs", Tabs)
-        new_ids = [f"tag-{i}" for i in range(len(tags))]
-        if [t.id for t in tabs.query(Tab)] == new_ids:
+        live = sum(1 for r in self._rows if r.get("live"))
+        # 每个标签一个该标签下正在开播的数量；"全部"即总开播数。
+        counts = {}
+        for tag in tags:
+            if tag == "全部":
+                counts[tag] = live
+            else:
+                counts[tag] = sum(
+                    1
+                    for r in self._rows
+                    if r.get("live") and tag in (r.get("tags") or [])
+                )
+        desired = [(f"tag-{i}", f"{tag} {counts[tag]}") for i, tag in enumerate(tags)]
+        if [(t.id, str(t.label)) for t in tabs.query(Tab)] == desired:
             return
         tabs.clear()
-        for idx, tag in enumerate(tags):
-            tabs.add_tab(Tab(tag, id=f"tag-{idx}"))
+        for i, tag in enumerate(tags):
+            tabs.add_tab(Tab(f"{tag} {counts[tag]}", id=f"tag-{i}"))
         if self._tag not in tags:
             self._tag = "全部"
         tabs.active = f"tag-{tags.index(self._tag)}"
@@ -315,9 +330,15 @@ class ZhiboTui(App):
         for row in self._visible_rows():
             is_live = bool(row.get("live"))
             if prev_live is True and not is_live:
-                # 开播与未开播分组之间的黑色空行（终端行高固定，无法做半行）。
+                # 开播与未开播分组之间的灰色分隔线（终端行高固定，无法做半行）。
                 sep += 1
-                table.add_row(*[Text("") for _ in self._col_keys], key=f"sep-{sep}")
+                table.add_row(
+                    *[
+                        Text("─" * width, style="#808080")
+                        for _key, _label, width in self.TABLE_COLUMNS
+                    ],
+                    key=f"sep-{sep}",
+                )
             cells = (
                 _status_cell(row, row["idx"] == self._playing_idx),
                 "、".join(row.get("tags") or []) or "-",
