@@ -21,10 +21,12 @@ from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static, T
 from tui.backend import MonitorBridge
 from tui.screens import (
     ConfirmScreen,
+    DownloadScreen,
     EditScreen,
     ImportScreen,
     ProxyScreen,
     SettingsScreen,
+    UpdateCenterScreen,
 )
 
 _TONE_STYLE = {
@@ -213,6 +215,8 @@ class ZhiboTui(App):
         Binding("p", "proxy", "代理"),
         Binding("i", "import_room", "导入"),
         Binding("n", "toggle_notifications", "通知", show=False),
+        Binding("u", "updates", "更新"),
+        Binding("w", "download", "下载"),
         Binding("l", "toggle_log", "日志"),
         Binding("r", "refresh", "刷新"),
         Binding("t", "cycle_theme", "主题", show=False),
@@ -526,6 +530,16 @@ class ZhiboTui(App):
         if self._modal_open() or self._bridge is None:
             return
         self._bridge.toggle_notifications()
+
+    def action_updates(self) -> None:
+        if self._modal_open() or self._bridge is None:
+            return
+        self.push_screen(UpdateCenterScreen(self._bridge))
+
+    def action_download(self) -> None:
+        if self._modal_open() or self._bridge is None:
+            return
+        self.push_screen(DownloadScreen(self._bridge))
 
     def action_copy_stream(self) -> None:
         if self._modal_open():

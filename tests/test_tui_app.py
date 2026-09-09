@@ -46,6 +46,10 @@ class FakeBridge:
         self.toggled: list[int] = []
         self.copied: list[int] = []
         self.opened: list[int] = []
+        self.checked: list[str] = []
+        self.ran_updates: list[tuple] = []
+        self.dl_started = None
+        self.dl_formats_url = None
         self.on_snapshot = None
         self.on_log = None
         self.on_player = None
@@ -158,6 +162,48 @@ class FakeBridge:
     def toggle_notifications(self):
         self.notifications_toggled = True
         return True, "桌面通知已关闭"
+
+    # ---- 更新中心 / 下载 ----
+
+    update_items = [
+        {
+            "value": "mpv", "label": "MPV 播放器", "kind": "tool",
+            "version": "v0.41", "installed": True, "actionLabel": "检查更新",
+            "actionEnabled": True, "actionKind": "check",
+            "updateStatus": "unchecked", "updateHint": "", "remoteVersion": "",
+            "downloadSize": "", "description": "直播流播放组件", "source": "便携版",
+            "lastUpdated": "刚刚",
+        },
+        {
+            "value": "fs1", "label": "FS1 配置", "kind": "configuration",
+            "version": "内置配置适配器", "installed": True, "actionLabel": "更新配置",
+            "actionEnabled": True, "actionKind": "execute", "updateStatus": "local",
+            "updateHint": "", "remoteVersion": "", "downloadSize": "",
+            "description": "飞速直播接口", "source": "本地配置", "lastUpdated": "",
+        },
+    ]
+
+    def load_update_center(self):
+        self.update_loaded = True
+        self.on_update_items(self.update_items)
+
+    def check_update(self, target):
+        self.checked.append(target)
+
+    def run_update(self, target, content=""):
+        self.ran_updates.append((target, content))
+        self.on_progress("update", 100.0, "更新完成")
+        self.on_update_done(True, "更新完成")
+
+    def list_download_formats(self, url):
+        self.dl_formats_url = url
+        self.on_formats([
+            {"index": 0, "label": "1080p mp4", "formatId": "f1", "hasAudio": True},
+        ])
+
+    def start_download(self, index):
+        self.dl_started = index
+        self.on_progress("download", 100.0, "下载完成：C:/x.mp4")
 
 
 @pytest.mark.asyncio
@@ -370,3 +416,82 @@ async def test_tui_settings_proxy_import_delete_flows():
         await pilot.press("n")
         await pilot.pause()
         assert bridge.notifications_toggled
+
+
+@pytest.mark.asyncio
+async def test_tui_update_center_flow():
+    from textual.widgets import Button, OptionList, ProgressBar
+
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+        await pilot.press("u")
+        for _ in range(30):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 2 and app.screen.query_one("#ucList", OptionList).option_count == 2:
+                break
+        assert len(app.screen_stack) == 2
+        option_list = app.screen.query_one("#ucList", OptionList)
+        assert option_list.option_count == 2
+
+        # 选中"检查更新"类组件并触发。
+        app.screen.query_one("#ucAction", Button).press()
+        await pilot.pause()
+        assert bridge.checked == ["mpv"]
+
+        # 执行类组件（fs1）走 run_update 并收到进度/完成回调。
+        app.screen._selected = "fs1"
+        app.screen._refresh_detail()
+        app.screen.query_one("#ucAction", Button).press()
+        await pilot.pause()
+        assert bridge.ran_updates == [("fs1", "")]
+        bar = app.screen.query_one("#ucBar", ProgressBar)
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if bar.progress == 100.0:
+                break
+        assert bar.progress == 100.0
+
+        # 关闭。
+        app.screen.query_one("#close", Button).press()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 1:
+                break
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_tui_download_flow():
+    from textual.widgets import Button, Input, OptionList, ProgressBar
+
+    bridge = FakeBridge()
+    app = ZhiboTui(bridge=bridge)
+    async with app.run_test(size=(130, 34)) as pilot:
+        await pilot.pause()
+        await pilot.press("w")
+        for _ in range(30):
+            await pilot.pause(0.05)
+            if len(app.screen_stack) == 2:
+                break
+        assert len(app.screen_stack) == 2
+
+        app.screen.query_one("#dlUrl", Input).value = "https://youtu.be/x"
+        app.screen.query_one("#dlLoad", Button).press()
+        for _ in range(30):
+            await pilot.pause(0.05)
+            if app.screen.query_one("#dlFormats", OptionList).option_count == 1:
+                break
+        assert app.screen.query_one("#dlFormats", OptionList).option_count == 1
+        assert app.screen.query_one("#dlStart", Button).disabled is False
+
+        app.screen.query_one("#dlStart", Button).press()
+        bar = app.screen.query_one("#dlBar", ProgressBar)
+        for _ in range(30):
+            await pilot.pause(0.05)
+            if bar.progress == 100.0:
+                break
+        assert bar.progress == 100.0
+        assert bridge.dl_started == 0
+        assert bridge.dl_formats_url == "https://youtu.be/x"

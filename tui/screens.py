@@ -11,7 +11,17 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    DataTable,
+    Input,
+    OptionList,
+    ProgressBar,
+    Select,
+    Static,
+    TextArea,
+)
+from textual.widgets.option_list import Option
 
 from tui.backend import MonitorBridge
 
@@ -499,3 +509,284 @@ class ImportScreen(ModalBase):
                 self.dismiss()
             else:
                 self._set_error(message)
+
+
+class UpdateCenterScreen(ModalBase):
+    """更新中心：组件列表 + 详情/执行 + 进度条。"""
+
+    CSS = """
+    #ucMain {
+        height: 1fr;
+        min-height: 16;
+    }
+    #ucList {
+        width: 34;
+        border: round $accent 30%;
+        background: $surface;
+    }
+    #ucDetail {
+        width: 1fr;
+        padding: 0 1;
+    }
+    #ucContent {
+        height: 6;
+        margin-top: 1;
+    }
+    #ucProgress {
+        display: none;
+        margin-top: 1;
+    }
+    #ucProgress.visible {
+        display: block;
+    }
+    """
+
+    def __init__(self, bridge: MonitorBridge) -> None:
+        super().__init__()
+        self._bridge = bridge
+        self._selected = "mpv"
+        self._busy = False
+        self._items: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="panel"):
+            yield Static("更新中心（打开后自动检查全部组件远端版本）", classes="panel-title")
+            with Horizontal(id="ucMain"):
+                yield OptionList(id="ucList")
+                with Vertical(id="ucDetail"):
+                    yield Static("", id="ucDetailText")
+                    yield TextArea(id="ucContent")
+            yield Static("", classes="form-error")
+            with Vertical(id="ucProgress"):
+                yield ProgressBar(total=100.0, show_eta=False, id="ucBar")
+                yield Static("", id="ucProgressText")
+            with Horizontal(classes="button-row"):
+                yield Button("组件操作", id="ucAction", variant="primary")
+                yield Button("关闭", id="close")
+
+    def on_mount(self) -> None:
+        bridge = self._bridge
+        bridge.on_update_items = self._on_items
+        bridge.on_progress = self._on_progress
+        bridge.on_update_done = self._on_done
+        self._content = self.query_one("#ucContent", TextArea)
+        self._content.display = False
+        self.query_one("#ucProgress").display = False
+        if bridge.update_items:
+            self._on_items(bridge.update_items)
+        bridge.load_update_center()
+
+    def on_unmount(self) -> None:
+        bridge = self._bridge
+        if bridge.on_update_items is self._on_items:
+            bridge.on_update_items = None
+        if bridge.on_progress is self._on_progress:
+            bridge.on_progress = None
+        if bridge.on_update_done is self._on_done:
+            bridge.on_update_done = None
+
+    def _on_items(self, items: list[dict]) -> None:
+        if not self._alive():
+            return
+        self._items = items
+        option_list = self.query_one("#ucList", OptionList)
+        highlighted = option_list.highlighted
+        option_list.clear_options()
+        for item in items:
+            status = str(item.get("updateStatus") or "")
+            glyph = {
+                "checking": "…", "current": "✓", "install": "↑", "update": "↑",
+                "unknown": "!", "failed": "!",
+            }.get(status, "")
+            option_list.add_option(
+                Option(f"{item.get('label', item.get('value'))} {glyph}", id=item["value"])
+            )
+        if highlighted is not None and 0 <= highlighted < option_list.option_count:
+            option_list.highlighted = highlighted
+        self._refresh_detail()
+
+    def _refresh_detail(self) -> None:
+        item = next(
+            (i for i in self._items if i.get("value") == self._selected), None
+        )
+        if item is None:
+            return
+        action = self.query_one("#ucAction", Button)
+        action.label = f"{item.get('actionLabel', '操作')} {item.get('label', '')}"
+        action.disabled = not bool(item.get("actionEnabled"))
+        body = Text()
+        body.append(item.get("label", "") + "\n", style="bold")
+        body.append(item.get("description", "") + "\n\n")
+        body.append(f"当前版本：{item.get('version', '-')}\n")
+        body.append(f"来源：{item.get('source', '-')}\n")
+        body.append(f"上次更新：{item.get('lastUpdated', '-')}\n")
+        hint = item.get("updateHint", "")
+        if hint:
+            tone = ""
+            if item.get("updateStatus") == "unknown":
+                tone = "red"
+            elif item.get("updateStatus") in {"current", "checking"}:
+                tone = "green"
+            body.append(f"状态：{hint}", style=tone)
+        self.query_one("#ucDetailText", Static).update(body)
+        self._content.display = item.get("value") in {"fs1", "bilibili_cookie"}
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option.id:
+            self._selected = str(event.option.id)
+            self._refresh_detail()
+
+    def _on_progress(self, kind: str, value: float, text: str) -> None:
+        if kind != "update" or not self._alive():
+            return
+        self.query_one("#ucProgress").display = True
+        bar = self.query_one("#ucBar", ProgressBar)
+        bar.update(progress=max(0.0, min(100.0, value)))
+        self.query_one("#ucProgressText", Static).update(
+            Text(text, style="dim" if 0 <= value < 100 else "")
+        )
+
+    def _on_done(self, ok: bool, message: str) -> None:
+        if not self._alive():
+            return
+        self.query_one("#ucProgress").display = True
+        bar = self.query_one("#ucBar", ProgressBar)
+        bar.update(progress=100.0)
+        self.query_one("#ucProgressText", Static).update(
+            Text(message, style="green" if ok else "red")
+        )
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+            return
+        if event.button.id == "ucAction" and not self._busy:
+            item = next(
+                (i for i in self._items if i.get("value") == self._selected), None
+            )
+            if item is None or not item.get("actionEnabled"):
+                return
+            kind = item.get("actionKind", "check")
+            if kind in {"check", "recheck"}:
+                self._bridge.check_update(item["value"])
+            else:
+                content = self._content.text if self._content.display else ""
+                self._bridge.run_update(item["value"], content)
+
+
+class DownloadScreen(ModalBase):
+    """视频下载：地址 → 格式列表 → 下载进度。"""
+
+    CSS = """
+    #dlFormats {
+        height: auto;
+        max-height: 14;
+        border: round $accent 30%;
+        background: $surface;
+        display: none;
+        margin-top: 1;
+    }
+    #dlFormats.visible {
+        display: block;
+    }
+    #dlProgress {
+        display: none;
+        margin-top: 1;
+    }
+    #dlProgress.visible {
+        display: block;
+    }
+    #dlUrl {
+        width: 1fr;
+    }
+    """
+
+    def __init__(self, bridge: MonitorBridge) -> None:
+        super().__init__()
+        self._bridge = bridge
+        self._busy = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="panel"):
+            yield Static("视频下载（yt-dlp）", classes="panel-title")
+            with Horizontal(classes="form-row"):
+                yield Static("视频地址", classes="form-label")
+                yield Input(placeholder="YouTube 等视频页面链接", id="dlUrl")
+            with Horizontal(classes="button-row"):
+                yield Button("获取格式列表", id="dlLoad", variant="primary")
+                yield Button("开始下载", id="dlStart", disabled=True)
+                yield Button("关闭", id="close")
+            yield OptionList(id="dlFormats")
+            yield Static("", classes="form-error")
+            with Vertical(id="dlProgress"):
+                yield ProgressBar(total=100.0, show_eta=False, id="dlBar")
+                yield Static("", id="dlProgressText")
+
+    def on_mount(self) -> None:
+        self._bridge.on_formats = self._on_formats
+        self._bridge.on_progress = self._on_progress
+        self.query_one("#dlProgress").display = False
+
+    def on_unmount(self) -> None:
+        bridge = self._bridge
+        if bridge.on_formats is self._on_formats:
+            bridge.on_formats = None
+        if bridge.on_progress is self._on_progress:
+            bridge.on_progress = None
+
+    def _on_formats(self, formats: list[dict]) -> None:
+        if not self._alive():
+            return
+        self._formats = formats
+        option_list = self.query_one("#dlFormats", OptionList)
+        option_list.clear_options()
+        for fmt in formats:
+            prefix = "♪ " if fmt.get("hasAudio") else "视频 "
+            option_list.add_option(
+                Option(f"{prefix}{fmt['label']}  [{fmt['formatId']}]", id=str(fmt["index"]))
+            )
+        option_list.display = True
+        if option_list.option_count and option_list.highlighted is None:
+            option_list.highlighted = 0
+        self.query_one("#dlStart", Button).disabled = False
+        self._busy = False  # 格式就绪，解除 dlLoad 期间的占用
+
+    def _on_progress(self, kind: str, value: float, text: str) -> None:
+        if kind != "download" or not self._alive():
+            return
+        if value >= 100.0:
+            self._busy = False  # 下载结束（含失败后重新开始）
+        self.query_one("#dlProgress").display = True
+        bar = self.query_one("#dlBar", ProgressBar)
+        bar.update(progress=max(0.0, min(100.0, value)))
+        self.query_one("#dlProgressText", Static).update(
+            Text(text, style="green" if value >= 100 else "")
+        )
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if self._busy:
+            return
+        if event.button.id == "close":
+            if len(self.app.screen_stack) > 1:
+                self.dismiss()
+            return
+        if event.button.id == "dlLoad":
+            url = self.query_one("#dlUrl", Input).value.strip()
+            if not url:
+                self._set_error("请先粘贴视频地址")
+                return
+            self._busy = True
+            self._set_error("")
+            self._bridge.list_download_formats(url)
+            return
+        if event.button.id == "dlStart":
+            option_list = self.query_one("#dlFormats", OptionList)
+            index = option_list.highlighted
+            if index is None:
+                self._set_error("请先选择一个下载格式")
+                return
+            option = option_list.get_option_at_index(index)
+            self._busy = True
+            event.button.disabled = True
+            self._bridge.start_download(int(option.id))

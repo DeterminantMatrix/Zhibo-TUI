@@ -10,8 +10,11 @@ import asyncio
 import copy
 import datetime
 import json
+import re
 import subprocess
+import sys
 import webbrowser
+from pathlib import Path
 
 from zhibo.app_logging import redact_sensitive_mapping, redact_sensitive_text
 from zhibo.config import (
@@ -34,6 +37,15 @@ from zhibo.proxy_config import (
 )
 from zhibo.quality_options import normalize_quality_choice, quality_for_plugin, quality_options
 from zhibo.viewmodel import sort_snapshots, status_snapshot, web_url_for_snapshot
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+_UPDATE_CHECK_TARGETS = ("mpv", "ffmpeg", "uosc", "streamlink", "streamget", "yt-dlp")
+_UPDATE_EXECUTABLE_TARGETS = {
+    "streamlink", "streamget", "yt-dlp", "mpv", "ffmpeg", "uosc", "fs1",
+    "bilibili_cookie",
+}
 
 
 # ---- 事务确认页的纯展示格式化（自 webui/Qt 移植；value 一律先脱敏） ------
@@ -131,6 +143,13 @@ class MonitorBridge:
         self._playing_idx = -1
         self._poll_round = 0
         self._pending: dict = {}
+        self._update_process: asyncio.subprocess.Process | None = None
+        # 更新中心 / 下载的回调与状态（同一循环，无需锁）。
+        self.on_progress = None  # callable(kind, value, text)
+        self.on_update_items = None  # callable(items)
+        self.on_update_done = None  # callable(ok, message)
+        self.on_formats = None  # callable(formats)
+        self.update_items: list[dict] = []
 
     # ---- 生命周期 -------------------------------------------------------
 
@@ -178,6 +197,13 @@ class MonitorBridge:
             await self.service.shutdown(timeout=1.5)
         await asyncio.to_thread(shutdown_plugin_workers, True)
         self._terminate_player()
+        update_process = self._update_process
+        self._update_process = None
+        if update_process is not None and update_process.returncode is None:
+            try:
+                update_process.terminate()
+            except ProcessLookupError:
+                pass
 
     def _terminate_player(self) -> None:
         process = self._player_process
@@ -479,26 +505,6 @@ class MonitorBridge:
             self._log(f"{updated.name} {state}")
         except Exception as exc:
             self._log(redact_sensitive_text(str(exc)))
-
-    # ---- 详情（同步纯函数，直接返回） -----------------------------------
-
-    def get_detail(self, follower_index: int) -> dict | None:
-        service = self.service
-        if service is None:
-            return None
-        status = service.followers.get(follower_index)
-        if status is None:
-            return None
-        detail = build_detail_view(
-            status, service.get_platform_health(status.follower.platform)
-        )
-        return {
-            "title": detail.title,
-            "rows": [
-                {"label": row.label, "value": row.value, "tone": row.tone}
-                for row in detail.rows
-            ],
-        }
 
     # ---- 详情（同步纯函数，直接返回） -----------------------------------
 
@@ -898,3 +904,345 @@ class MonitorBridge:
             return True, f"桌面通知已{state}"
         except Exception as exc:
             return False, redact_sensitive_text(str(exc))
+
+    # ---- P3：更新中心 -----------------------------------------------------
+
+    def _progress(self, kind: str, value: float, text: str) -> None:
+        if self.on_progress is not None:
+            self.on_progress(kind, value, text)
+
+    def _push_update_items(self) -> None:
+        if self.on_update_items is not None:
+            self.on_update_items(self.update_items)
+
+    def _patch_update_item(self, target: str, fields: dict) -> None:
+        self.update_items = [
+            {**item, **fields} if item.get("value") == target else item
+            for item in self.update_items
+        ]
+        self._push_update_items()
+
+    def load_update_center(self) -> None:
+        self._spawn(self._load_update_status())
+
+    async def _load_update_status(self) -> None:
+        try:
+            from zhibo.update_state import update_items
+
+            items = await asyncio.to_thread(update_items)
+            self.update_items = items
+            self._push_update_items()
+            # 打开即自动检查全部组件的远端版本，免去逐个点击。
+            await self._check_update_all_impl()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._log(f"读取更新状态失败：{redact_sensitive_text(str(exc))}")
+
+    def check_update(self, target: str) -> None:
+        self._spawn(self._check_update_target(str(target or "")))
+
+    async def _check_update_target(self, target: str) -> None:
+        try:
+            from zhibo.update_state import check_update_target
+
+            allowed = {"mpv", "ffmpeg", "uosc", "streamlink", "streamget", "yt-dlp"}
+            if target not in allowed:
+                raise ValueError("该组件不支持远端版本检查")
+            fields = await asyncio.to_thread(check_update_target, target)
+        except Exception as exc:
+            fields = {
+                "updateStatus": "unknown",
+                "updateHint": f"检查更新失败：{exc}",
+                "actionLabel": "重新检查",
+                "actionEnabled": True,
+                "actionKind": "recheck",
+            }
+        self._patch_update_item(target, fields)
+
+    def check_update_all(self) -> None:
+        self._spawn(self._check_update_all_impl())
+
+    async def _check_update_all_impl(self) -> None:
+        from zhibo.update_state import check_update_target
+
+        checking_item = {
+            "updateStatus": "checking",
+            "updateHint": "正在检查远端版本…",
+            "actionLabel": "检查中",
+            "actionEnabled": False,
+            "actionKind": "none",
+        }
+        for target in _UPDATE_CHECK_TARGETS:
+            self._patch_update_item(target, dict(checking_item))
+
+        async def check_one(target: str) -> None:
+            try:
+                fields = await asyncio.to_thread(check_update_target, target)
+            except Exception as exc:
+                fields = {
+                    "updateStatus": "unknown",
+                    "updateHint": f"检查更新失败：{exc}",
+                    "actionLabel": "重新检查",
+                    "actionEnabled": True,
+                    "actionKind": "recheck",
+                }
+            self._patch_update_item(target, fields)
+
+        await asyncio.gather(*(check_one(target) for target in _UPDATE_CHECK_TARGETS))
+
+    async def _record_update(self, target: str, version: str) -> None:
+        from zhibo.update_state import record_successful_update
+
+        try:
+            await asyncio.to_thread(record_successful_update, target, version)
+        except Exception as exc:
+            self._log(f"更新已完成，但更新时间记录失败：{redact_sensitive_text(str(exc))}")
+
+    def run_update(self, target: str, content: str = "") -> None:
+        self._spawn(self._run_update(str(target or ""), str(content or "")))
+
+    async def _run_update(self, target: str, content: str) -> None:
+        try:
+            if target not in _UPDATE_EXECUTABLE_TARGETS:
+                raise ValueError("更新目标无效")
+            self._progress("update", 5.0, "正在准备更新…")
+            if target == "bilibili_cookie":
+                await self._update_bilibili_cookie(content)
+                version = "本地凭据"
+                await self._record_update(target, version)
+                message = "B站 Cookie 已安全更新；后续检测会自动读取新文件"
+            elif target == "fs1":
+                await self._update_fs1(content)
+                version = "内置配置适配器"
+                await self._record_update(target, version)
+                message = "FS1 配置已更新并重新载入"
+            elif target == "uosc":
+                from zhibo.mpv_ui import check_uosc_update
+
+                plan = await asyncio.to_thread(check_uosc_update)
+                if plan.status == "current":
+                    message = f"uosc 已是最新版本（{plan.installed_version}），没有下载安装包"
+                    self._progress("update", 100.0, message)
+                    self._log(message)
+                    self._mark_update_done(target, plan.installed_version, downloaded=False)
+                    return
+                if not plan.action_allowed:
+                    raise RuntimeError(plan.reason or "无法确认 uosc 版本，已取消下载")
+                action = "安装" if plan.status == "install" else "修复" if plan.status == "repair" else "更新"
+                version = await self._install_uosc(plan)
+                await self._record_update(target, version)
+                message = f"uosc {action}完成：{version}；下一次启动 MPV 时自动使用新界面"
+            elif target in {"mpv", "ffmpeg"}:
+                from zhibo.tool_runtime import check_tool_update
+
+                plan = await asyncio.to_thread(check_tool_update, target)
+                if plan.status == "current":
+                    label = "MPV 播放器" if target == "mpv" else "FFmpeg"
+                    message = f"{label} 已是最新版本（{plan.installed_version}），没有下载安装包"
+                    self._progress("update", 100.0, message)
+                    self._log(message)
+                    self._mark_update_done(target, plan.installed_version, downloaded=False)
+                    return
+                if not plan.action_allowed:
+                    raise RuntimeError(plan.reason or "无法可靠判断当前与远端版本，已取消下载")
+                action = {
+                    "install": "安装", "update": "更新",
+                    "migrate": "切换精简版", "repair": "修复安装",
+                }[plan.status]
+                version = await self._install_tool(target, plan)
+                await self._record_update(target, version)
+                label = "MPV 播放器" if target == "mpv" else "FFmpeg"
+                message = f"{label} {action}完成：{version}；后续操作将自动使用新版本"
+            else:
+                from zhibo.update_state import check_package_update, installed_version
+
+                plan = await asyncio.to_thread(check_package_update, target, target)
+                if plan.status == "current":
+                    message = f"{target} 已是最新版本（{plan.installed_version}），没有执行 pip 下载"
+                    self._progress("update", 100.0, message)
+                    self._log(message)
+                    self._mark_update_done(target, plan.installed_version, downloaded=False)
+                    return
+                if not plan.action_allowed:
+                    raise RuntimeError(plan.reason or f"无法确认 {target} 的远端版本，已取消更新")
+                action = "安装" if plan.status == "install" else "更新"
+                await self._update_package(target)
+                version = installed_version(target)
+                await self._record_update(target, version)
+                message = f"{target} {action}完成：{version}；请重启程序后使用新版本"
+            self._progress("update", 100.0, message)
+            self._log(message)
+            self._mark_update_done(target, version, downloaded=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            message = redact_sensitive_text(str(exc))
+            self._log(f"更新失败：{message}")
+            if self.on_update_done is not None:
+                self.on_update_done(False, message)
+
+    def _mark_update_done(self, target: str, version: str, *, downloaded: bool) -> None:
+        fields = {"lastUpdated": "刚刚"}
+        if version:
+            fields["version"] = str(version)
+            fields["installed"] = True
+        if downloaded:
+            fields.update(
+                actionLabel="检查更新",
+                actionEnabled=True,
+                actionKind="check",
+                updateStatus="unchecked",
+                updateHint="更新完成；可按需再次检查",
+                remoteVersion="",
+                downloadSize="",
+            )
+        self._patch_update_item(target, fields)
+        if self.on_update_done is not None:
+            self.on_update_done(True, "更新完成")
+
+    async def _update_bilibili_cookie(self, content: str) -> None:
+        from zhibo.bilibili_cookie import update_bilibili_cookies
+
+        if not content.strip():
+            raise ValueError("请粘贴 Netscape cookies.txt 内容")
+        self._progress("update", 25.0, "正在校验 B站 Cookie…")
+        result = await asyncio.to_thread(update_bilibili_cookies, content)
+        self._log(
+            f"B站 Cookie：更新 {result.bilibili_records_updated} 条，"
+            f"保留其他站点 {result.non_bilibili_records_preserved} 条"
+        )
+
+    async def _update_fs1(self, content: str) -> None:
+        from zhibo.plugins import get_plugin
+        from zhibo.plugins.fs1_plugin import update_from_text
+
+        if not content.strip():
+            raise ValueError("请粘贴 FS /v1/room 请求 curl")
+        self._progress("update", 25.0, "正在解析并更新 FS1 配置…")
+        applied = await asyncio.to_thread(update_from_text, content)
+        plugin = get_plugin("fs1")
+        if plugin is not None and callable(getattr(plugin, "reload_config", None)):
+            plugin.reload_config()
+        service = self._require()
+        service.reset_platform_health("fs1")
+        self._emit_snapshot()
+        for key in sorted(applied):
+            value = "***" if key in {"token", "authorization", "cookie", "imei", "dun_imei"} else applied[key]
+            self._log(f"FS1 {key}: {redact_sensitive_text(value)}")
+
+    async def _update_package(self, package: str) -> None:
+        if getattr(sys, "frozen", False):
+            raise RuntimeError("打包版不能在程序内更新 Python 组件，请下载新版程序覆盖安装")
+        self._progress("update", 15.0, f"正在更新 {package}…")
+        kwargs: dict[str, object] = {
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.STDOUT,
+            "cwd": str(PROJECT_ROOT),
+        }
+        if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW"):
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", "--upgrade",
+            "--upgrade-strategy", "only-if-needed", package, **kwargs,
+        )
+        self._update_process = process
+        try:
+            assert process.stdout is not None
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = redact_sensitive_text(line.decode("utf-8", errors="replace").strip())
+                if text:
+                    self._log(text)
+            code = await process.wait()
+            if code != 0:
+                raise RuntimeError(f"{package} 更新失败，退出码={code}")
+        finally:
+            if self._update_process is process:
+                self._update_process = None
+
+    async def _install_tool(self, tool: str, plan) -> str:
+        from zhibo.tool_runtime import install_portable_tool, seven_zip_available
+
+        if not seven_zip_available():
+            self._progress("update", 10.0, f"正在安装 {tool.upper()} 解压支持…")
+            await self._update_package("py7zr")
+
+        def report(value: float, message: str) -> None:
+            self._progress("update", value, redact_sensitive_text(message))
+
+        return await asyncio.to_thread(install_portable_tool, tool, report, plan=plan)
+
+    async def _install_uosc(self, plan) -> str:
+        from zhibo.mpv_ui import install_uosc
+
+        def report(value: float, message: str) -> None:
+            self._progress("update", value, redact_sensitive_text(message))
+
+        return await asyncio.to_thread(install_uosc, report, plan=plan)
+
+    # ---- P3：视频下载 -----------------------------------------------------
+
+    def list_download_formats(self, url: str) -> None:
+        self._spawn(self._load_download_formats(str(url or "")))
+
+    async def _load_download_formats(self, url: str) -> None:
+        try:
+            from zhibo.plugins import get_plugin
+
+            plugin = get_plugin("yt_dlp")
+            if plugin is None:
+                raise RuntimeError("yt-dlp 插件未加载")
+            self._progress("download", -1.0, "正在获取可用格式…")
+            formats = await plugin.list_formats(url)
+            if not formats:
+                raise RuntimeError("没有找到可下载格式")
+            self._pending["download"] = {"url": url, "formats": formats}
+            payload = [
+                {"index": i, "label": fmt.label, "formatId": fmt.format_id, "hasAudio": fmt.has_audio}
+                for i, fmt in enumerate(formats)
+            ]
+            if self.on_formats is not None:
+                self.on_formats(payload)
+            self._log("已获取格式列表")
+        except Exception as exc:
+            self._log(f"获取格式列表失败：{redact_sensitive_text(str(exc))}")
+
+    def start_download(self, format_index: int) -> None:
+        self._spawn(self._download(int(format_index)))
+
+    async def _download(self, format_index: int) -> None:
+        try:
+            from zhibo.plugins import get_plugin
+
+            pending = self._pending.get("download")
+            if not pending:
+                raise ValueError("下载格式列表已失效，请重新获取")
+            formats = pending["formats"]
+            if format_index < 0 or format_index >= len(formats):
+                raise ValueError("请选择有效的下载格式")
+            fmt = formats[format_index]
+            plugin = get_plugin("yt_dlp")
+            if plugin is None:
+                raise RuntimeError("yt-dlp 插件未加载")
+
+            def on_progress(message: str) -> None:
+                safe = redact_sensitive_text(message)
+                match = re.search(r"(\d+(?:\.\d+)?)%", safe)
+                value = float(match.group(1)) if match else -1.0
+                self._progress("download", value, safe)
+
+            self._progress("download", 0.0, f"正在下载 {fmt.label}")
+            path = await plugin.download(
+                pending["url"],
+                format_id=fmt.format_id,
+                progress_cb=on_progress,
+                has_audio=fmt.has_audio,
+            )
+            self._pending.pop("download", None)
+            self._progress("download", 100.0, f"下载完成：{path}")
+            self._log(f"下载完成：{path}")
+        except Exception as exc:
+            self._log(f"下载失败：{redact_sensitive_text(str(exc))}")
