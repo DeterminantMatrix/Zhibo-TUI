@@ -176,7 +176,7 @@ class ZhiboTui(App):
         ("platform", "平台", 10),
         ("name", "主播", 14),
         ("title", "标题", 21),
-        ("quality", "画质", 10),
+        ("quality", "画质", 5),
         ("plugin", "插件", 12),
         ("last_check", "检测", 11),
     )
@@ -355,7 +355,7 @@ class ZhiboTui(App):
                     ],
                     key=f"sep-{sep}",
                 )
-            cells = (
+            cells: list = (
                 _status_cell(row, row["idx"] == self._playing_idx),
                 "、".join(row.get("tags") or []) or "-",
                 row.get("platform", "-"),
@@ -365,6 +365,12 @@ class ZhiboTui(App):
                 row.get("configured_plugin") or row.get("plugin") or "-",
                 row.get("last_check", "-"),
             )
+            if not is_live:
+                # 未开播整行置暗；状态列本身已是暗色圆点，保持不动。
+                cells = [
+                    cell if isinstance(cell, Text) else Text(str(cell), style="dim")
+                    for cell in cells
+                ]
             row_key = table.add_row(*cells, key=row["idx"])
             self._row_keys[row["idx"]] = row_key
             prev_live = is_live
