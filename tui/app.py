@@ -93,9 +93,11 @@ class ZhiboTui(App):
     SUB_TITLE = "TUI 骨架 · 假数据"
 
     CSS = """
+    * {
+        scrollbar-size: 1 1;
+    }
     #filterBar {
-        height: 3;
-        align-vertical: middle;
+        height: auto;
     }
     #tagTabs {
         width: 1fr;
@@ -104,7 +106,11 @@ class ZhiboTui(App):
     }
     #search {
         width: 36;
+        height: 1;
+        border: none;
+        padding: 0 1;
         margin: 0 1 0 0;
+        background: $surface;
     }
     #mainArea {
         height: 1fr;
@@ -115,7 +121,7 @@ class ZhiboTui(App):
         border: round $accent;
     }
     #log {
-        width: 42;
+        width: 34;
         border: round $accent 30%;
         padding: 0 1;
     }
