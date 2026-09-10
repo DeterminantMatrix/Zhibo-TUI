@@ -8,6 +8,7 @@ kotlin {
 
 dependencies {
     api(libs.okhttp)
+    implementation(libs.okhttp.tls)
     implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
 }

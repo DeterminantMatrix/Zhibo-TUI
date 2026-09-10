@@ -62,6 +62,46 @@ data class Fs1Auth(
         fun fromJsonText(text: String): Fs1Auth? = runCatching {
             fromJson(json.parseToJsonElement(text).jsonObject)
         }.getOrNull()
+
+        /**
+         * 解析桌面 rooms.yaml 的扁平 config 段（键: 值）。
+         * 只需要标量键值对；YAML 里 token 等长串是纯文本单行。
+         */
+        fun fromYamlText(text: String): Fs1Auth? {
+            val values = mutableMapOf<String, String>()
+            var inConfig = false
+            for (rawLine in text.removePrefix("\uFEFF").lines()) {
+                if (rawLine.isBlank() || rawLine.trimStart().startsWith("#")) continue
+                if (!rawLine.startsWith(" ") && !rawLine.startsWith("\t")) {
+                    inConfig = rawLine.trimEnd().removeSuffix(":") == "config"
+                    continue
+                }
+                if (!inConfig) continue
+                val line = rawLine.trim()
+                val idx = line.indexOf(':')
+                if (idx <= 0) continue
+                val key = line.substring(0, idx).trim()
+                var value = line.substring(idx + 1).trim()
+                if ((value.startsWith("\"") && value.endsWith("\"") && value.length >= 2) ||
+                    (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+                ) {
+                    value = value.substring(1, value.length - 1)
+                }
+                if (value.isNotEmpty()) values[key] = value
+            }
+            val token = values["token"] ?: return null
+            return Fs1Auth(
+                siteUrl = values["site_url"] ?: Fs1Trust.DEFAULT_SITE_URL,
+                apiUrl = values["api_url"] ?: Fs1Trust.DEFAULT_API_URL,
+                playApiUrl = values["play_api_url"] ?: Fs1Trust.DEFAULT_PLAY_API_URL,
+                token = token,
+                apiVersion = values["api_version"] ?: "8",
+                version = values["version"] ?: "1.8.4",
+                imei = values["imei"] ?: "",
+                dunImei = values["dun_imei"] ?: "",
+                userAgent = values["user_agent"] ?: DEFAULT_UA,
+            )
+        }
     }
 }
 

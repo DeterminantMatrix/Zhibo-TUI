@@ -98,6 +98,10 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
         ActivityResultContracts.CreateDocument("text/csv"),
     ) { uri -> uri?.let(vm::exportSettingsCsv) }
 
+    val pickFs1Yaml = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(vm::importFs1Yaml) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { _ -> startMonitoring() }
@@ -170,6 +174,9 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                 OutlinedButton(onClick = { ZhiboApp.instance.browserRequest.value = BrowserRequest.Fs1Auth }) {
                     Text("FS1授权采集${if (credStore.hasFs1Auth()) " ✓" else ""}")
                 }
+                OutlinedButton(onClick = { pickFs1Yaml.launch(arrayOf("*/*")) }) {
+                    Text("FS1配置导入")
+                }
             }
             Text(
                 text = "设置：轮询 ${settings.pollInterval}s · 并发 ${settings.maxConcurrentChecks} · 通知 ${if (settings.notificationsEnabled) "开" else "关"}",
@@ -181,7 +188,10 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                 style = MaterialTheme.typography.titleMedium,
             )
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 items(followers) { f ->
                     val status = statuses[f.url]
                     val (dotColor, stateText) = when (status?.state) {

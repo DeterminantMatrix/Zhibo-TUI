@@ -68,4 +68,35 @@ class Fs1Test {
         assertNull(Fs1Auth.fromJsonText("""{"foo": 1}"""))
         assertNull(Fs1Auth.fromJsonText("not json"))
     }
+
+    @Test
+    fun `fs1 rooms yaml config section parses`() {
+        val yaml = """
+            config:
+              api_url: https://apc.xzood6veuybwkr.com/v1/room
+              site_url: 'https://www.fszb130.com'
+              api_version: "8"
+              token: eyJhbGci.abc_def
+              imei: "12345678901234567890123456789012"
+              dun_imei: '09876543210987654321098765432109'
+              user_agent: Mozilla/5.0 Test
+              cookie: a=1; b=2
+              version: 1.8.4
+              play_api_url: https://openim-php-api.q2n1w3g2y5v0w4l1.cc/v230/play/url
+
+            rooms:
+              - room_id: "1"
+        """.trimIndent()
+        val auth = Fs1Auth.fromYamlText(yaml)!!
+        assertEquals("https://apc.xzood6veuybwkr.com/v1/room", auth.apiUrl)
+        assertEquals("https://www.fszb130.com", auth.siteUrl)
+        assertEquals("8", auth.apiVersion)
+        assertEquals("eyJhbGci.abc_def", auth.token)
+        assertEquals("12345678901234567890123456789012", auth.imei)
+        assertEquals("09876543210987654321098765432109", auth.dunImei)
+        assertEquals("Mozilla/5.0 Test", auth.userAgent)
+        assertEquals("1.8.4", auth.version)
+        // rooms 段不解析、无 token 时拒绝导入
+        assertNull(Fs1Auth.fromYamlText("rooms:\n  - room_id: \"1\"\n"))
+    }
 }

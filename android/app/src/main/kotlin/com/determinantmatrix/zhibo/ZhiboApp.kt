@@ -61,6 +61,8 @@ class ZhiboApp : Application() {
 
     private fun buildRegistry(): ResolverRegistry {
         val http = Http()
+        // FS1 API 服务器漏发 LE YE1 中间证书，需要内置信任锚（桌面靠 Windows AIA 补链）
+        val fs1Http = Http(extraTrustedCertificates = listOf("/certs/fs1_ye1_intermediate.der"))
         return ResolverRegistry(
             listOf(
                 StreamgetResolver(
@@ -68,7 +70,7 @@ class ZhiboApp : Application() {
                     douyu = DouyuResolver(http),
                     huya = HuyaResolver(http),
                 ),
-                Fs1Resolver(http) { credentials.current() },
+                Fs1Resolver(fs1Http) { credentials.current() },
                 UnsupportedResolver("streamlink", "安卓端 streamlink 插件开发中"),
                 UnsupportedResolver("yt_dlp", "安卓端 yt-dlp 插件开发中"),
             ),

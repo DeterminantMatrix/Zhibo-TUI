@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.determinantmatrix.zhibo.core.database.toDomain
 import com.determinantmatrix.zhibo.core.database.toEntity
+import com.determinantmatrix.zhibo.core.resolver.Fs1Auth
 import com.determinantmatrix.zhibo.core.model.AppConfig
 import com.determinantmatrix.zhibo.core.model.Follower
 import com.determinantmatrix.zhibo.core.model.FollowersCsv
@@ -39,6 +40,25 @@ class FollowersViewModel : ViewModel() {
 
     fun notify(text: String) {
         _message.value = text
+    }
+
+    fun importFs1Yaml(uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = ZhiboApp.instance.contentResolver.openInputStream(uri)!!
+                        .bufferedReader(Charsets.UTF_8).readText()
+                    val auth = Fs1Auth.fromYamlText(text)
+                        ?: throw IllegalArgumentException("未在文件中找到 FS1 授权（config.token）")
+                    ZhiboApp.instance.credentials.saveFs1Auth(auth)
+                    auth
+                }
+            }
+            result.fold(
+                onSuccess = { _message.value = "FS1 授权已导入并生效（站点 ${it.siteUrl.substringAfter("//")}）" },
+                onFailure = { _message.value = "FS1 导入失败：${it.message?.take(80)}" },
+            )
+        }
     }
 
     fun importFollowersCsv(uri: Uri) {
