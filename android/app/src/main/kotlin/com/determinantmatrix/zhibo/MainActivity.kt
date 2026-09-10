@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.determinantmatrix.zhibo.core.database.toDomain
 import com.determinantmatrix.zhibo.designsys.ThemeMode
 import com.determinantmatrix.zhibo.designsys.ZhiboTheme
 import com.determinantmatrix.zhibo.ui.FunctionsScreen
@@ -150,3 +151,9 @@ fun stopMonitoring() {
         Intent(context, MonitorService::class.java).setAction(MonitorService.ACTION_STOP),
     )
 }
+
+/** 诊断扫描用：同步读取当前关注列表（诊断本身已在后台线程）。 */
+fun followersSnapshot(): List<com.determinantmatrix.zhibo.core.model.Follower> =
+    kotlinx.coroutines.runBlocking {
+        ZhiboApp.instance.database.followerDao().getAll().map { it.toDomain() }
+    }

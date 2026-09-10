@@ -53,6 +53,29 @@ class Http(
         builder.build()
     }
 
+    data class ProbeResult(val ok: Boolean, val code: Int, val contentType: String, val sampleBytes: Int)
+
+    /**
+     * 流地址可达性探测：GET + Range 采样前 4KB（直播 CDN 通常不支持 Range，
+     * 会忽略并回全量——读取限长立即断开）。用于验证取到的地址真实可拉流。
+     */
+    fun probe(url: String, headers: Map<String, String> = emptyMap()): ProbeResult {
+        val request = newBuilder(url, headers)
+            .header("Range", "bytes=0-4095")
+            .get()
+        client.newCall(request.build()).execute().use { response ->
+            val stream = response.body?.byteStream()
+            var read = 0
+            if (stream != null) {
+                val buf = ByteArray(4096)
+                read = stream.read(buf)
+            }
+            val code = response.code
+            val contentType = response.header("Content-Type").orEmpty()
+            return ProbeResult(code in 200..299 && read > 0, code, contentType, read)
+        }
+    }
+
     /** 供 media3 OkHttpDataSource 复用同一套超时配置。 */
     fun callFactory(): okhttp3.Call.Factory = client
 

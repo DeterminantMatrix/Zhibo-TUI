@@ -18,10 +18,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import com.determinantmatrix.zhibo.StreamDiagnostics
 import com.determinantmatrix.zhibo.ZhiboApp
+import com.determinantmatrix.zhibo.followersSnapshot
 import com.determinantmatrix.zhibo.startMonitoring
 import com.determinantmatrix.zhibo.stopMonitoring
 
@@ -126,6 +130,56 @@ fun FunctionsScreen() {
                             OutlinedButton(onClick = {
                                 ZhiboApp.instance.playerManager.stop(handle)
                             }) { Text("停止") }
+                        }
+                    }
+                }
+            }
+            item {
+                Text("直播源诊断", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "对全部在线直播间逐路取流并真实拉流采样，验证采集链路。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                val diagScope = androidx.compose.runtime.rememberCoroutineScope()
+                var running by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                var results by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf<List<StreamDiagnostics.Row>>(emptyList())
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            running = true
+                            diagScope.launch {
+                                results = StreamDiagnostics.sweep(
+                                    ZhiboApp.instance.registry,
+                                    followersSnapshot(),
+                                    ZhiboApp.instance.engineController.engine.statuses.value,
+                                )
+                                running = false
+                            }
+                        },
+                        enabled = !running,
+                    ) { Text(if (running) "诊断中…" else "一键诊断全部在线源") }
+                    results.forEach { r ->
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    "${r.name} · ${r.statusState}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (r.streamOk == true) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    "${r.plugin} · HTTP ${r.probeCode} · ${r.contentType.take(30)} · " +
+                                        "${r.sampleBytes}B · ${r.ms}ms" +
+                                        if (r.error.isNotEmpty()) " · ${r.error}" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
