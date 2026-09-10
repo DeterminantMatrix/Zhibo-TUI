@@ -1,9 +1,12 @@
 package com.determinantmatrix.zhibo
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -22,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -32,7 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.determinantmatrix.zhibo.core.monitor.CheckState
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,25 +58,44 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
     val followers by vm.followers.collectAsState()
     val settings by vm.settings.collectAsState()
     val message by vm.message.collectAsState()
+    val controller = ZhiboApp.instance.engineController
+    val statuses by controller.engine.statuses.collectAsState()
+    val monitoring by controller.running.collectAsState()
 
     val pickFollowersCsv = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(vm::importFollowersCsv) }
-
     val saveFollowersCsv = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv"),
     ) { uri -> uri?.let(vm::exportFollowersCsv) }
-
     val pickSettingsCsv = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(vm::importSettingsCsv) }
-
     val saveSettingsCsv = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv"),
     ) { uri -> uri?.let(vm::exportSettingsCsv) }
 
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { _ -> startMonitoring() }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    fun toggleMonitoring() {
+        if (monitoring) {
+            stopMonitoring()
+        } else if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            startMonitoring()
+        }
+    }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("直播监控 · M0") }) },
+        topBar = { TopAppBar(title = { Text("直播监控 · M1") }) },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -79,24 +104,28 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "数据互通验证：导入桌面版 followers.csv，导出后应与桌面序列化逐字节一致。",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = ::toggleMonitoring) {
+                    Text(if (monitoring) "停止监控" else "开始监控")
+                }
+                OutlinedButton(onClick = { controller.engine.refreshNow() }) {
+                    Text("手动刷新")
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { pickFollowersCsv.launch(arrayOf("text/*", "text/csv", "application/csv", "text/comma-separated-values")) }) {
+                OutlinedButton(onClick = { pickFollowersCsv.launch(arrayOf("text/*", "text/csv", "application/csv", "text/comma-separated-values")) }) {
                     Text("导入关注 CSV")
                 }
-                Button(onClick = { saveFollowersCsv.launch("followers.csv") }) {
+                OutlinedButton(onClick = { saveFollowersCsv.launch("followers.csv") }) {
                     Text("导出关注 CSV")
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { pickSettingsCsv.launch(arrayOf("text/*", "text/csv", "application/csv", "text/comma-separated-values")) }) {
+                OutlinedButton(onClick = { pickSettingsCsv.launch(arrayOf("text/*", "text/csv", "application/csv", "text/comma-separated-values")) }) {
                     Text("导入设置 CSV")
                 }
-                Button(onClick = { saveSettingsCsv.launch("settings.csv") }) {
+                OutlinedButton(onClick = { saveSettingsCsv.launch("settings.csv") }) {
                     Text("导出设置 CSV")
                 }
             }
@@ -110,10 +139,21 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                 text = "设置：轮询 ${settings.pollInterval}s · 并发 ${settings.maxConcurrentChecks} · 通知 ${if (settings.notificationsEnabled) "开" else "关"}",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Text("关注项（${followers.size}）", style = MaterialTheme.typography.titleMedium)
+            val liveCount = statuses.values.count { it.state == CheckState.LIVE }
+            Text(
+                text = "关注项（${followers.size}）· 在线 $liveCount" + if (monitoring) "" else " · 监控未启动",
+                style = MaterialTheme.typography.titleMedium,
+            )
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(followers) { f ->
+                    val status = statuses[f.url]
+                    val (dotColor, stateText) = when (status?.state) {
+                        CheckState.LIVE -> Color(0xFF2E9E44) to "在线"
+                        CheckState.OFFLINE -> Color(0xFFB0B0B0) to "离线"
+                        CheckState.ERROR -> Color(0xFFD64541) to "异常"
+                        null -> Color(0xFF9E9E9E) to "未检测"
+                    }
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.padding(12.dp),
@@ -124,14 +164,19 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                                 modifier = Modifier
                                     .size(10.dp)
                                     .background(
-                                        if (f.enabled) Color(0xFF2E9E44) else Color(0xFFB0B0B0),
+                                        if (!f.enabled) Color(0xFFDDDDDD) else dotColor,
                                         CircleShape,
                                     ),
                             )
                             Column {
                                 Text(f.name, style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    text = "${f.platform} · ${f.plugin} · ${f.quality} · ${f.tags.joinToString("/")}",
+                                    text = buildString {
+                                        append("${f.platform} · ${f.plugin}")
+                                        if (f.enabled) append(" · $stateText")
+                                        status?.title?.takeIf { it.isNotEmpty() }?.let { append(" · $it") }
+                                        status?.error?.takeIf { it.isNotEmpty() }?.let { append("（${it.take(60)}）") }
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -142,4 +187,16 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
             }
         }
     }
+}
+
+private fun startMonitoring() {
+    val context = ZhiboApp.instance
+    ContextCompat.startForegroundService(context, Intent(context, MonitorService::class.java))
+}
+
+private fun stopMonitoring() {
+    val context = ZhiboApp.instance
+    context.startService(
+        Intent(context, MonitorService::class.java).setAction(MonitorService.ACTION_STOP),
+    )
 }

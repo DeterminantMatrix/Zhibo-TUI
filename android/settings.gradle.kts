@@ -23,5 +23,8 @@ dependencyResolutionManagement {
 rootProject.name = "zhibo-android"
 include(":app")
 include(":core:model")
+include(":core:network")
 include(":core:database")
 include(":core:datastore")
+include(":core:resolver")
+include(":core:monitor")

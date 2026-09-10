@@ -37,6 +37,9 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:database"))
     implementation(project(":core:datastore"))
+    implementation(project(":core:network"))
+    implementation(project(":core:resolver"))
+    implementation(project(":core:monitor"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
