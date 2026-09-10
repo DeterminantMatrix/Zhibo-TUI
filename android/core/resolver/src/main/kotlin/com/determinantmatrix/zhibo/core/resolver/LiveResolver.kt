@@ -1,13 +1,14 @@
 package com.determinantmatrix.zhibo.core.resolver
 
 import com.determinantmatrix.zhibo.core.model.LiveInfo
+import kotlinx.serialization.json.JsonObject
 
 /** 直播流解析器 — 对应桌面 LiveStreamPlugin。实现必须线程安全。 */
 interface LiveResolver {
     val name: String
 
-    /** 检测直播间状态；网络/解析失败应抛异常，由引擎统一归类。 */
-    suspend fun checkLive(url: String, quality: String = "best"): LiveInfo
+    /** 检测直播间状态；网络/解析失败应抛异常，由引擎统一归类。extra 为关注项扩展字段。 */
+    suspend fun checkLive(url: String, quality: String = "best", extra: JsonObject = JsonObject(emptyMap())): LiveInfo
 
     /** 获取播放地址；未开播或失败抛异常。 */
     suspend fun getStreamUrl(url: String, quality: String = "best"): String
@@ -15,7 +16,7 @@ interface LiveResolver {
 
 /** 未知插件 / 未支持平台的占位实现。 */
 class UnsupportedResolver(override val name: String, private val reason: String) : LiveResolver {
-    override suspend fun checkLive(url: String, quality: String): LiveInfo =
+    override suspend fun checkLive(url: String, quality: String, extra: JsonObject): LiveInfo =
         throw UnsupportedOperationException(reason)
 
     override suspend fun getStreamUrl(url: String, quality: String): String =

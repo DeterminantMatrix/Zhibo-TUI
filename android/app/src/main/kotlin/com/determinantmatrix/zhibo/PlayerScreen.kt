@@ -101,6 +101,11 @@ fun PlayerScreen(manager: PlayerManager) {
             OutlinedButton(onClick = { manager.stop(handle) }) { Text("停止播放") }
             OutlinedButton(onClick = { manager.showList() }) { Text("后台播放") }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                ZhiboApp.instance.browserRequest.value = BrowserRequest.Sniff(handle.followerUrl, handle.name)
+            }) { Text("网页嗅探兜底") }
+        }
 
         if (message.isNotEmpty()) {
             Card(modifier = Modifier.fillMaxWidth()) {

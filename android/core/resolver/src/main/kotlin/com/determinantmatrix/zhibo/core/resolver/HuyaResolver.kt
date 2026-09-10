@@ -39,7 +39,7 @@ class HuyaResolver(private val http: Http) : LiveResolver {
         return id
     }
 
-    override suspend fun checkLive(url: String, quality: String): LiveInfo = withContext(Dispatchers.IO) {
+    override suspend fun checkLive(url: String, quality: String, extra: kotlinx.serialization.json.JsonObject): LiveInfo = withContext(Dispatchers.IO) {
         val rid = resolveRoomId(url)
         val api = "https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid=$rid&showSecret=1"
         val parsed = Jsonx.parse(http.get(api, pcHeaders))

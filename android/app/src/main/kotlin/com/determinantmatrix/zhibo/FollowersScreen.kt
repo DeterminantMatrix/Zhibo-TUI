@@ -50,7 +50,14 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 val manager = ZhiboApp.instance.playerManager
                 val foreground by manager.foreground.collectAsState()
-                if (foreground == null) FollowersScreen() else PlayerScreen(manager)
+                val browser by ZhiboApp.instance.browserRequest.collectAsState()
+                when {
+                    browser != null -> BrowserScreen(browser!!) {
+                        ZhiboApp.instance.browserRequest.value = null
+                    }
+                    foreground != null -> PlayerScreen(manager)
+                    else -> FollowersScreen()
+                }
             }
         }
     }
@@ -153,6 +160,17 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
+
+            Text("凭据", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val credStore = ZhiboApp.instance.credentials
+                OutlinedButton(onClick = { ZhiboApp.instance.browserRequest.value = BrowserRequest.BilibiliLogin }) {
+                    Text("B站登录采集${if (credStore.hasBilibiliCookie()) " ✓" else ""}")
+                }
+                OutlinedButton(onClick = { ZhiboApp.instance.browserRequest.value = BrowserRequest.Fs1Auth }) {
+                    Text("FS1授权采集${if (credStore.hasFs1Auth()) " ✓" else ""}")
+                }
+            }
             Text(
                 text = "设置：轮询 ${settings.pollInterval}s · 并发 ${settings.maxConcurrentChecks} · 通知 ${if (settings.notificationsEnabled) "开" else "关"}",
                 style = MaterialTheme.typography.bodyMedium,

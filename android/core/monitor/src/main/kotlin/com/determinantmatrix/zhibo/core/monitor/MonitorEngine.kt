@@ -123,7 +123,7 @@ class MonitorEngine(
             }
             try {
                 val info = withTimeout(checkTimeoutMillis) {
-                    resolver.checkLive(f.url, f.quality)
+                    resolver.checkLive(f.url, f.quality, f.extra)
                 }
                 onCheckOk(f, info)
                 return

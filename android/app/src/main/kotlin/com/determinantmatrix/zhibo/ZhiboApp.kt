@@ -3,6 +3,7 @@ package com.determinantmatrix.zhibo
 import android.app.Application
 import com.determinantmatrix.zhibo.core.database.toDomain
 import com.determinantmatrix.zhibo.core.database.ZhiboDatabase
+import com.determinantmatrix.zhibo.core.datastore.CredentialStore
 import com.determinantmatrix.zhibo.core.datastore.SettingsRepository
 import com.determinantmatrix.zhibo.core.model.AppConfig
 import com.determinantmatrix.zhibo.core.model.Follower
@@ -11,6 +12,7 @@ import com.determinantmatrix.zhibo.core.monitor.MonitorEngine
 import com.determinantmatrix.zhibo.core.network.Http
 import com.determinantmatrix.zhibo.core.resolver.BilibiliResolver
 import com.determinantmatrix.zhibo.core.resolver.DouyuResolver
+import com.determinantmatrix.zhibo.core.resolver.Fs1Resolver
 import com.determinantmatrix.zhibo.core.resolver.HuyaResolver
 import com.determinantmatrix.zhibo.core.resolver.ResolverRegistry
 import com.determinantmatrix.zhibo.core.resolver.StreamgetResolver
@@ -18,7 +20,15 @@ import com.determinantmatrix.zhibo.core.resolver.UnsupportedResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+
+/** 浏览器打开请求 — 内置浏览器的三种姿态。 */
+sealed interface BrowserRequest {
+    data object BilibiliLogin : BrowserRequest
+    data object Fs1Auth : BrowserRequest
+    data class Sniff(val url: String, val name: String) : BrowserRequest
+}
 
 /** M0 手工依赖注入；后续模块化时替换为 Hilt。 */
 class ZhiboApp : Application() {
@@ -37,23 +47,30 @@ class ZhiboApp : Application() {
         instance = this
         database = ZhiboDatabase.build(this)
         settings = SettingsRepository(this)
+        credentials = CredentialStore(this)
         val registry = buildRegistry()
         engineController = EngineController(registry)
         playerManager = PlayerManager(this, registry)
+        browserRequest = MutableStateFlow(null)
     }
+
+    lateinit var credentials: CredentialStore
+        private set
+    lateinit var browserRequest: MutableStateFlow<BrowserRequest?>
+        private set
 
     private fun buildRegistry(): ResolverRegistry {
         val http = Http()
         return ResolverRegistry(
             listOf(
                 StreamgetResolver(
-                    bilibili = BilibiliResolver(http),
+                    bilibili = BilibiliResolver(http) { credentials.bilibiliCookie() },
                     douyu = DouyuResolver(http),
                     huya = HuyaResolver(http),
                 ),
+                Fs1Resolver(http) { credentials.current() },
                 UnsupportedResolver("streamlink", "安卓端 streamlink 插件开发中"),
                 UnsupportedResolver("yt_dlp", "安卓端 yt-dlp 插件开发中"),
-                UnsupportedResolver("fs1", "安卓端 FS1 插件开发中（M3 随浏览器授权一并落地）"),
             ),
         )
     }

@@ -15,7 +15,7 @@ class MonitorEngineTest {
     private class FakeResolver(var live: Boolean, var fail: Boolean = false) : LiveResolver {
         override val name = "streamget"
         var checks = 0
-        override suspend fun checkLive(url: String, quality: String): LiveInfo {
+        override suspend fun checkLive(url: String, quality: String, extra: kotlinx.serialization.json.JsonObject): LiveInfo {
             checks++
             if (fail) throw java.io.IOException("connection timed out")
             return LiveInfo(

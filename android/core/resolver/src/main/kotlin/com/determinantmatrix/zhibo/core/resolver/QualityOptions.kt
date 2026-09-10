@@ -24,9 +24,17 @@ object QualityOptions {
         Option("流畅", "流畅"),
     )
 
+    val FS1_OPTIONS = listOf(
+        BEST,
+        Option("蓝光真码", "lgzm"),
+        Option("高清真码", "gqzm"),
+        Option("标清真码", "bqzm"),
+    )
+
     fun forPlatform(platform: String): List<Option> = when (platform.trim().lowercase()) {
         "bilibili" -> BILIBILI_OPTIONS
         "douyu", "huya" -> STREAMGET_OPTIONS
+        "fs1" -> FS1_OPTIONS
         else -> listOf(BEST)
     }
 }

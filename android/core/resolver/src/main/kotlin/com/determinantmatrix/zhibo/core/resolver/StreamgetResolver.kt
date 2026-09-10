@@ -14,7 +14,7 @@ class StreamgetResolver(
 
     override val name = "streamget"
 
-    override suspend fun checkLive(url: String, quality: String): LiveInfo {
+    override suspend fun checkLive(url: String, quality: String, extra: kotlinx.serialization.json.JsonObject): LiveInfo {
         return when (platformOf(url)) {
             "bilibili" -> bilibili.checkLive(url, quality)
             "douyu" -> douyu.checkLive(url, quality)

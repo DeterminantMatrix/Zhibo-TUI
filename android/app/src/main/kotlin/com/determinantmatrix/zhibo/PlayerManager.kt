@@ -74,12 +74,33 @@ class PlayerManager(
             _message.value = "播放失败：${failure.message?.take(120)}"
             return
         }
+        addHandle(follower.url, follower.name, follower.platform, quality, streamUrl)
+        _message.value = "${follower.name} 播放中（$quality）"
+    }
+
+    /** 播放嗅探到的直连地址（M3 浏览器兜底通道）。 */
+    suspend fun playDirect(name: String, platform: String, url: String) {
+        if (_handles.value.size >= MAX_PLAYERS) {
+            _message.value = "最多 $MAX_PLAYERS 个直播间同时播放"
+            return
+        }
+        addHandle(url, name, platform, "嗅探", url)
+        _message.value = "$name 播放中（嗅探流）"
+    }
+
+    private suspend fun addHandle(
+        followerUrl: String,
+        name: String,
+        platform: String,
+        quality: String,
+        streamUrl: String,
+    ) {
         val handle = withContext(Dispatchers.Main) {
             val player = buildPlayer(streamUrl)
             PlayerHandle(
-                followerUrl = follower.url,
-                name = follower.name,
-                platform = follower.platform,
+                followerUrl = followerUrl,
+                name = name,
+                platform = platform,
                 quality = quality,
                 streamUrl = streamUrl,
                 player = player,
@@ -87,7 +108,6 @@ class PlayerManager(
         }
         _handles.value = _handles.value + handle
         _foreground.value = handle
-        _message.value = "${follower.name} 播放中（$quality）"
     }
 
     suspend fun switchQuality(handle: PlayerHandle, newQuality: String) {

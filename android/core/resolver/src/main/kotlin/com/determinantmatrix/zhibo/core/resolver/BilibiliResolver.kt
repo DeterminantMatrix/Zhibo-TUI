@@ -7,25 +7,31 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
 /** B 站直播 — 直译 streamget BilibiliLiveStream（免登录检测 + playUrl/getRoomPlayInfo 取流）。 */
-class BilibiliResolver(private val http: Http, private val cookies: String = "") : LiveResolver {
+class BilibiliResolver(
+    private val http: Http,
+    private val cookiesProvider: () -> String = { "" },
+) : LiveResolver {
 
     override val name = "bilibili"
 
-    private val pcHeaders = mapOf(
-        "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-        "accept-language" to "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
-        "cookie" to cookies.ifEmpty { "__ac_nonce=064caded4009deafd8b89;" },
-        "origin" to "https://live.bilibili.com",
-        "referer" to "https://live.bilibili.com/26066074",
-    )
+    private fun headers(): Map<String, String> {
+        val cookie = cookiesProvider().ifEmpty { "__ac_nonce=064caded4009deafd8b89;" }
+        return mapOf(
+            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+            "accept-language" to "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "cookie" to cookie,
+            "origin" to "https://live.bilibili.com",
+            "referer" to "https://live.bilibili.com/26066074",
+        )
+    }
 
     private fun roomId(url: String): String = url.substringBefore("?").trimEnd('/').substringAfterLast('/')
 
     private fun jsonObj(element: kotlinx.serialization.json.JsonElement?): JsonObject? = element as? JsonObject
 
-    override suspend fun checkLive(url: String, quality: String): LiveInfo = withContext(Dispatchers.IO) {
+    override suspend fun checkLive(url: String, quality: String, extra: kotlinx.serialization.json.JsonObject): LiveInfo = withContext(Dispatchers.IO) {
         val rid = roomId(url)
-        val roomInit = Jsonx.parse(http.get("$API/room/v1/Room/room_init?id=$rid", pcHeaders))
+        val roomInit = Jsonx.parse(http.get("$API/room/v1/Room/room_init?id=$rid", headers()))
         val data = Jsonx.obj(Jsonx.at(roomInit, "data"))
             ?: throw IllegalStateException("B站房间不存在或返回异常")
         val liveStatus = Jsonx.int(data["live_status"])
@@ -33,13 +39,13 @@ class BilibiliResolver(private val http: Http, private val cookies: String = "")
 
         val anchor = if (uid.isNotEmpty()) {
             runCatching {
-                val master = Jsonx.parse(http.get("$API/live_user/v1/Master/info?uid=$uid", pcHeaders))
+                val master = Jsonx.parse(http.get("$API/live_user/v1/Master/info?uid=$uid", headers()))
                 Jsonx.str(Jsonx.at(master, "data", "info", "uname"))
             }.getOrDefault("")
         } else ""
 
         val title = runCatching {
-            val h5 = Jsonx.parse(http.get("$API/xlive/web-room/v1/index/getH5InfoByRoom?room_id=$rid", pcHeaders))
+            val h5 = Jsonx.parse(http.get("$API/xlive/web-room/v1/index/getH5InfoByRoom?room_id=$rid", headers()))
             Jsonx.str(Jsonx.at(h5, "data", "room_info", "title"))
         }.getOrDefault("")
 
@@ -58,7 +64,7 @@ class BilibiliResolver(private val http: Http, private val cookies: String = "")
 
         // 首选：playUrl（FLV durl 列表）
         val playParsed = runCatching {
-            Jsonx.parse(http.get("$API/room/v1/Room/playUrl?cid=$rid&qn=$qn&platform=web", pcHeaders))
+            Jsonx.parse(http.get("$API/room/v1/Room/playUrl?cid=$rid&qn=$qn&platform=web", headers()))
         }.getOrNull()
         if (playParsed != null && Jsonx.int(Jsonx.at(playParsed, "code")) == 0) {
             val urls = Jsonx.array(Jsonx.at(playParsed, "data", "durl"))
@@ -81,7 +87,7 @@ class BilibiliResolver(private val http: Http, private val cookies: String = "")
             "panorama" to "1",
             "hdr_type" to "0,1",
         ).entries.joinToString("&") { "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}" }
-        val info = Jsonx.parse(http.get("$API/xlive/web-room/v2/index/getRoomPlayInfo?$query", pcHeaders))
+        val info = Jsonx.parse(http.get("$API/xlive/web-room/v2/index/getRoomPlayInfo?$query", headers()))
         if (Jsonx.int(Jsonx.at(info, "data", "live_status")) == 0) throw IllegalStateException("未开播")
 
         val stream = Jsonx.array(Jsonx.at(info, "data", "playurl_info", "playurl", "stream"))

@@ -23,7 +23,7 @@ class DouyuResolver(private val http: Http) : LiveResolver {
         throw IllegalArgumentException("无法从 URL 解析斗鱼房间号：$url")
     }
 
-    override suspend fun checkLive(url: String, quality: String): LiveInfo = withContext(Dispatchers.IO) {
+    override suspend fun checkLive(url: String, quality: String, extra: kotlinx.serialization.json.JsonObject): LiveInfo = withContext(Dispatchers.IO) {
         val rid = roomId(url)
         val body = http.get("https://www.douyu.com/betard/$rid", baseHeaders)
         val room = Jsonx.obj(Jsonx.at(Jsonx.parse(body), "room"))
