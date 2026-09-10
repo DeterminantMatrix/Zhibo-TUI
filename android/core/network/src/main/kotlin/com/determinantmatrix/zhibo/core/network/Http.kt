@@ -22,6 +22,8 @@ class Http(
     connectTimeoutMillis: Long = 10_000,
     readTimeoutMillis: Long = 20_000,
     extraTrustedCertificates: List<String> = emptyList(),
+    /** 形如 http://host:port 的代理地址（Twitch/YouTube 等需代理的平台用）。 */
+    proxy: String? = null,
 ) {
 
     private val client: OkHttpClient = run {
@@ -29,6 +31,12 @@ class Http(
             .connectTimeout(connectTimeoutMillis, TimeUnit.MILLISECONDS)
             .readTimeout(readTimeoutMillis, TimeUnit.MILLISECONDS)
             .writeTimeout(20_000, TimeUnit.MILLISECONDS)
+        if (proxy != null) {
+            runCatching {
+                val uri = java.net.URI(proxy)
+                builder.proxy(java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress(uri.host, uri.port)))
+            }
+        }
         if (extraTrustedCertificates.isNotEmpty()) {
             val factory = java.security.cert.CertificateFactory.getInstance("X.509")
             val handshake = HandshakeCertificates.Builder().apply {
@@ -57,6 +65,12 @@ class Http(
         }.build()
         return execute(newBuilder(url, headers).post(body))
     }
+
+    fun postJson(url: String, headers: Map<String, String>, json: String): String =
+        execute(
+            newBuilder(url, headers + mapOf("Content-Type" to "application/json"))
+                .post(json.toRequestBody("application/json".toMediaType())),
+        )
 
     fun postXml(url: String, headers: Map<String, String>, xml: String): String =
         execute(

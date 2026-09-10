@@ -50,6 +50,23 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun current(): AppConfig = config.first()
 
+    /** 只更新平台代理（设置界面用），其余设置保持不变。 */
+    suspend fun savePlatformProxies(proxies: Map<String, String>) {
+        context.zhiboDataStore.edit { prefs ->
+            prefs.asMap().keys
+                .filter { it.name.startsWith(SettingsCsv.KEY_PLATFORM_PROXY_PREFIX) }
+                .forEach { prefs.remove(it) }
+            proxies.forEach { (platform, proxy) ->
+                if (platform.isNotBlank() && proxy.isNotBlank()) {
+                    prefs[platformProxyKey(platform)] = proxy
+                }
+            }
+        }
+    }
+
+    private fun platformProxyKey(platform: String) =
+        stringPreferencesKey(SettingsCsv.KEY_PLATFORM_PROXY_PREFIX + platform.lowercase().trim())
+
     suspend fun save(cfg: AppConfig) {
         context.zhiboDataStore.edit { prefs ->
             prefs[Keys.pollInterval] = cfg.pollInterval

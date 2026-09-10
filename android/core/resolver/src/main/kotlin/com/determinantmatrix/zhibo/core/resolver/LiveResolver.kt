@@ -1,6 +1,7 @@
 package com.determinantmatrix.zhibo.core.resolver
 
 import com.determinantmatrix.zhibo.core.model.LiveInfo
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.JsonObject
 
 /** 直播流解析器 — 对应桌面 LiveStreamPlugin。实现必须线程安全。 */
@@ -23,15 +24,23 @@ class UnsupportedResolver(override val name: String, private val reason: String)
         throw UnsupportedOperationException(reason)
 }
 
-/** 插件注册表 — 对应桌面 discover_plugins/get_plugin。 */
+/** 插件注册表 — 对应桌面 discover_plugins/get_plugin；支持代理变化后热替换。 */
 class ResolverRegistry(resolvers: List<LiveResolver>) {
 
-    private val map: Map<String, LiveResolver> =
-        resolvers.associateBy { it.name }
+    private val map = ConcurrentHashMap<String, LiveResolver>()
+
+    init {
+        replaceAll(resolvers)
+    }
 
     fun get(name: String): LiveResolver? = map[name.lowercase().trim()]
 
     fun names(): List<String> = map.keys.toList()
+
+    fun replaceAll(resolvers: List<LiveResolver>) {
+        map.clear()
+        resolvers.forEach { map[it.name.lowercase().trim()] = it }
+    }
 }
 
 object FallbackChain {

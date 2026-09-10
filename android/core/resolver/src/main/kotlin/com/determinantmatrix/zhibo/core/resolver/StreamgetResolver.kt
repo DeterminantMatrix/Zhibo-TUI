@@ -10,6 +10,7 @@ class StreamgetResolver(
     private val bilibili: BilibiliResolver,
     private val douyu: DouyuResolver,
     private val huya: HuyaResolver,
+    private val douyin: DouyinResolver,
 ) : LiveResolver {
 
     override val name = "streamget"
@@ -19,6 +20,7 @@ class StreamgetResolver(
             "bilibili" -> bilibili.checkLive(url, quality)
             "douyu" -> douyu.checkLive(url, quality)
             "huya" -> huya.checkLive(url, quality)
+            "douyin" -> douyin.checkLive(url, quality)
             else -> throw UnsupportedOperationException("安卓端暂不支持该平台的 streamget 检测：$url")
         }
     }
@@ -27,6 +29,7 @@ class StreamgetResolver(
         "bilibili" -> bilibili.getStreamUrl(url, quality)
         "douyu" -> douyu.getStreamUrl(url, quality)
         "huya" -> huya.getStreamUrl(url, quality)
+        "douyin" -> douyin.getStreamUrl(url, quality)
         else -> throw UnsupportedOperationException("安卓端暂不支持该平台的 streamget 取流：$url")
     }
 

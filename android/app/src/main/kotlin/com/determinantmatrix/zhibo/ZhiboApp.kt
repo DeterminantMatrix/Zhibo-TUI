@@ -12,10 +12,12 @@ import com.determinantmatrix.zhibo.core.monitor.MonitorEngine
 import com.determinantmatrix.zhibo.core.network.Http
 import com.determinantmatrix.zhibo.core.resolver.BilibiliResolver
 import com.determinantmatrix.zhibo.core.resolver.DouyuResolver
+import com.determinantmatrix.zhibo.core.resolver.DouyinResolver
 import com.determinantmatrix.zhibo.core.resolver.Fs1Resolver
 import com.determinantmatrix.zhibo.core.resolver.HuyaResolver
 import com.determinantmatrix.zhibo.core.resolver.ResolverRegistry
 import com.determinantmatrix.zhibo.core.resolver.StreamgetResolver
+import com.determinantmatrix.zhibo.core.resolver.TwitchResolver
 import com.determinantmatrix.zhibo.core.resolver.UnsupportedResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,34 +50,45 @@ class ZhiboApp : Application() {
         database = ZhiboDatabase.build(this)
         settings = SettingsRepository(this)
         credentials = CredentialStore(this)
-        val registry = buildRegistry()
+        registry = ResolverRegistry(emptyList())
         engineController = EngineController(registry)
         playerManager = PlayerManager(this, registry)
         browserRequest = MutableStateFlow(null)
+        refreshResolvers(emptyMap())
     }
 
-    lateinit var credentials: CredentialStore
-        private set
-    lateinit var browserRequest: MutableStateFlow<BrowserRequest?>
+    lateinit var registry: ResolverRegistry
         private set
 
-    private fun buildRegistry(): ResolverRegistry {
+    /** 代理设置变化时重建各平台解析器（保留同一注册表实例）。 */
+    fun refreshResolvers(proxies: Map<String, String>) {
         val http = Http()
-        // FS1 API 服务器漏发 LE YE1 中间证书，需要内置信任锚（桌面靠 Windows AIA 补链）
-        val fs1Http = Http(extraTrustedCertificates = listOf("/certs/fs1_ye1_intermediate.der"))
-        return ResolverRegistry(
+        val twitchProxy = proxies["twitch"]
+        val youtubeProxy = proxies["youtube"]
+        registry.replaceAll(
             listOf(
                 StreamgetResolver(
                     bilibili = BilibiliResolver(http) { credentials.bilibiliCookie() },
                     douyu = DouyuResolver(http),
                     huya = HuyaResolver(http),
+                    douyin = DouyinResolver(http),
                 ),
-                Fs1Resolver(fs1Http) { credentials.current() },
+                TwitchResolver(
+                    Http(proxy = twitchProxy?.takeIf { it.isNotBlank() && it != "direct" }),
+                ),
+                Fs1Resolver(fs1Http()) { credentials.current() },
                 UnsupportedResolver("streamlink", "安卓端 streamlink 插件开发中"),
-                UnsupportedResolver("yt_dlp", "安卓端 yt-dlp 插件开发中"),
+                UnsupportedResolver("yt_dlp", "安卓端 YouTube 解析用浏览器嗅探兜底"),
             ),
         )
     }
+
+    private fun fs1Http(): Http = Http(extraTrustedCertificates = listOf("/certs/fs1_ye1_intermediate.der"))
+
+    lateinit var credentials: CredentialStore
+        private set
+    lateinit var browserRequest: MutableStateFlow<BrowserRequest?>
+        private set
 
     companion object {
         lateinit var instance: ZhiboApp

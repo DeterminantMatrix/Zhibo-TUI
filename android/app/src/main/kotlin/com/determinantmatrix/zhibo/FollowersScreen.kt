@@ -33,6 +33,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -107,6 +108,9 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
     ) { _ -> startMonitoring() }
 
     val clickScope = androidx.compose.runtime.rememberCoroutineScope()
+    var showProxyDialog by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -177,6 +181,21 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                 OutlinedButton(onClick = { pickFs1Yaml.launch(arrayOf("*/*")) }) {
                     Text("FS1配置导入")
                 }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { showProxyDialog = true }) {
+                    Text("平台代理")
+                }
+            }
+            if (showProxyDialog) {
+                ProxyDialog(
+                    current = vm.settings.value.platformProxies,
+                    onSave = { proxies ->
+                        ZhiboApp.instance.refreshResolvers(proxies)
+                        vm.notify("代理设置已保存并生效")
+                    },
+                    onDismiss = { showProxyDialog = false },
+                )
             }
             Text(
                 text = "设置：轮询 ${settings.pollInterval}s · 并发 ${settings.maxConcurrentChecks} · 通知 ${if (settings.notificationsEnabled) "开" else "关"}",

@@ -11,6 +11,7 @@ dependencies {
     api(project(":core:model"))
     implementation(project(":core:network"))
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.bouncycastle.provider)
     implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
 }
