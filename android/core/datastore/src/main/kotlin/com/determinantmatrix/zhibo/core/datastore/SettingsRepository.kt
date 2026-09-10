@@ -30,6 +30,19 @@ class SettingsRepository(private val context: Context) {
             stringPreferencesKey(SettingsCsv.KEY_PLATFORM_PROXY_PREFIX + platform)
     }
 
+    /** 主题模式：system / light / dark。 */
+    val themeMode: Flow<String> = context.zhiboDataStore.data.map { prefs ->
+        prefs[preferencesKey("theme_mode")] ?: "system"
+    }
+
+    suspend fun setThemeMode(mode: String) {
+        context.zhiboDataStore.edit { prefs ->
+            prefs[preferencesKey("theme_mode")] = mode
+        }
+    }
+
+    private fun preferencesKey(name: String) = androidx.datastore.preferences.core.stringPreferencesKey(name)
+
     val config: Flow<AppConfig> = context.zhiboDataStore.data.map { prefs ->
         AppConfig(
             pollInterval = prefs[Keys.pollInterval] ?: 60,
