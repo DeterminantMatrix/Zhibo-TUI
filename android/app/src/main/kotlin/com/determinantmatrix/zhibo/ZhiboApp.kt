@@ -29,13 +29,33 @@ class ZhiboApp : Application() {
         private set
     lateinit var engineController: EngineController
         private set
+    lateinit var playerManager: PlayerManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         database = ZhiboDatabase.build(this)
         settings = SettingsRepository(this)
-        engineController = EngineController()
+        val registry = buildRegistry()
+        engineController = EngineController(registry)
+        playerManager = PlayerManager(this, registry)
+    }
+
+    private fun buildRegistry(): ResolverRegistry {
+        val http = Http()
+        return ResolverRegistry(
+            listOf(
+                StreamgetResolver(
+                    bilibili = BilibiliResolver(http),
+                    douyu = DouyuResolver(http),
+                    huya = HuyaResolver(http),
+                ),
+                UnsupportedResolver("streamlink", "安卓端 streamlink 插件开发中"),
+                UnsupportedResolver("yt_dlp", "安卓端 yt-dlp 插件开发中"),
+                UnsupportedResolver("fs1", "安卓端 FS1 插件开发中（M3 随浏览器授权一并落地）"),
+            ),
+        )
     }
 
     companion object {
@@ -45,7 +65,7 @@ class ZhiboApp : Application() {
 }
 
 /** 持有监控引擎与应用级作用域；前台服务只负责保活与通知。 */
-class EngineController {
+class EngineController(private val registry: ResolverRegistry) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -61,7 +81,7 @@ class EngineController {
 
     val engine = MonitorEngine(
         scope = scope,
-        registry = buildRegistry(),
+        registry = registry,
         followersProvider = { latestFollowers },
         configProvider = { EngineConfig.from(latestConfig) },
     )
@@ -74,21 +94,5 @@ class EngineController {
         scope.launch {
             ZhiboApp.instance.settings.config.collect { latestConfig = it }
         }
-    }
-
-    private fun buildRegistry(): ResolverRegistry {
-        val http = Http()
-        return ResolverRegistry(
-            listOf(
-                StreamgetResolver(
-                    bilibili = BilibiliResolver(http),
-                    douyu = DouyuResolver(http),
-                    huya = HuyaResolver(http),
-                ),
-                UnsupportedResolver("streamlink", "安卓端 streamlink 插件开发中（M1 未含）"),
-                UnsupportedResolver("yt_dlp", "安卓端 yt-dlp 插件开发中（M1 未含）"),
-                UnsupportedResolver("fs1", "安卓端 FS1 插件开发中（M1 未含）"),
-            ),
-        )
     }
 }

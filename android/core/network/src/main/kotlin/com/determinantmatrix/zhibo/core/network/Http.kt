@@ -21,6 +21,9 @@ class Http(
         .writeTimeout(20_000, TimeUnit.MILLISECONDS)
         .build()
 
+    /** 供 media3 OkHttpDataSource 复用同一套超时配置。 */
+    fun callFactory(): okhttp3.Call.Factory = client
+
     fun get(url: String, headers: Map<String, String> = emptyMap()): String =
         execute(newBuilder(url, headers).get())
 

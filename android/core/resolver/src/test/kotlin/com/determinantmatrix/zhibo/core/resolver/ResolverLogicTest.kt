@@ -9,6 +9,13 @@ import org.junit.Test
 class ResolverLogicTest {
 
     @Test
+    fun `quality options match desktop tables`() {
+        assertEquals(listOf("best", "蓝光", "高清", "流畅"), QualityOptions.forPlatform("bilibili").map { it.value })
+        assertEquals(listOf("best", "UHD", "HD", "LD"), QualityOptions.forPlatform("douyu").map { it.value })
+        assertEquals(listOf("best"), QualityOptions.forPlatform("fs1").map { it.value })
+    }
+
+    @Test
     fun `bilibili qn mapping matches desktop alias table`() {
         assertEquals(10000, Quality.bilibiliQn("best"))
         assertEquals(10000, Quality.bilibiliQn("原画"))

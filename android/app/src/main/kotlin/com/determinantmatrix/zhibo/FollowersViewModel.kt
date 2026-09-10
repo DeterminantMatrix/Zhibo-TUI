@@ -37,6 +37,10 @@ class FollowersViewModel : ViewModel() {
     private val _message = MutableStateFlow("就绪")
     val message: StateFlow<String> = _message
 
+    fun notify(text: String) {
+        _message.value = text
+    }
+
     fun importFollowersCsv(uri: Uri) {
         viewModelScope.launch {
             val result = runCatching {

@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.determinantmatrix.zhibo.core.monitor.CheckState
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,8 +48,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MaterialTheme {
-                FollowersScreen()
+                val manager = ZhiboApp.instance.playerManager
+                val foreground by manager.foreground.collectAsState()
+                if (foreground == null) FollowersScreen() else PlayerScreen(manager)
             }
+        }
+    }
+
+    /** 进入画中画；条件不满足时静默失败（如已在 PiP 中）。 */
+    fun enterPictureInPictureModeSafely() {
+        if (Build.VERSION.SDK_INT < 26) return
+        runCatching {
+            enterPictureInPictureMode(
+                android.app.PictureInPictureParams.Builder()
+                    .setAspectRatio(android.util.Rational(16, 9))
+                    .build(),
+            )
         }
     }
 }
@@ -78,6 +94,8 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { _ -> startMonitoring() }
+
+    val clickScope = androidx.compose.runtime.rememberCoroutineScope()
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -154,7 +172,19 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                         CheckState.ERROR -> Color(0xFFD64541) to "异常"
                         null -> Color(0xFF9E9E9E) to "未检测"
                     }
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    val playing = ZhiboApp.instance.playerManager.handles.collectAsState().value
+                        .any { it.followerUrl == f.url }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (status?.state == CheckState.LIVE) {
+                                    clickScope.launch { ZhiboApp.instance.playerManager.play(f) }
+                                } else {
+                                    vm.notify(f.name + if (f.enabled) " 未开播或未检测到在线" else " 已停用")
+                                }
+                            },
+                    ) {
                         Row(
                             modifier = Modifier.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -174,6 +204,7 @@ fun FollowersScreen(vm: FollowersViewModel = viewModel()) {
                                     text = buildString {
                                         append("${f.platform} · ${f.plugin}")
                                         if (f.enabled) append(" · $stateText")
+                                        if (playing) append(" · ▶播放中")
                                         status?.title?.takeIf { it.isNotEmpty() }?.let { append(" · $it") }
                                         status?.error?.takeIf { it.isNotEmpty() }?.let { append("（${it.take(60)}）") }
                                     },
