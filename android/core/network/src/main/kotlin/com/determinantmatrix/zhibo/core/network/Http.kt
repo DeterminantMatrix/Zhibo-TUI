@@ -5,6 +5,8 @@ import java.util.concurrent.TimeUnit
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.tls.HandshakeCertificates
 
 /**
@@ -55,6 +57,12 @@ class Http(
         }.build()
         return execute(newBuilder(url, headers).post(body))
     }
+
+    fun postXml(url: String, headers: Map<String, String>, xml: String): String =
+        execute(
+            newBuilder(url, headers + mapOf("Content-Type" to "text/xml; charset=\"utf-8\""))
+                .post(xml.toRequestBody("text/xml; charset=utf-8".toMediaType())),
+        )
 
     private fun newBuilder(url: String, headers: Map<String, String>): Request.Builder {
         val builder = Request.Builder().url(url)

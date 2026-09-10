@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.upstream.BandwidthMeter
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -31,6 +33,7 @@ class PlayerManager(
         var quality: String,
         val streamUrl: String,
         val player: ExoPlayer,
+        val stats: PlayerStats,
     )
 
     private val _handles = MutableStateFlow<List<PlayerHandle>>(emptyList())
@@ -52,6 +55,10 @@ class PlayerManager(
     /** 回列表页；其余播放器继续在后台播放。 */
     fun showList() {
         _foreground.value = null
+    }
+
+    fun setMessage(text: String) {
+        _message.value = text
     }
 
     suspend fun play(follower: Follower, quality: String = follower.quality) {
@@ -96,7 +103,9 @@ class PlayerManager(
         streamUrl: String,
     ) {
         val handle = withContext(Dispatchers.Main) {
-            val player = buildPlayer(streamUrl)
+            val meter = DefaultBandwidthMeter.Builder(context).build()
+            val player = buildPlayer(streamUrl, meter)
+            val stats = PlayerStats(meter)
             PlayerHandle(
                 followerUrl = followerUrl,
                 name = name,
@@ -104,6 +113,7 @@ class PlayerManager(
                 quality = quality,
                 streamUrl = streamUrl,
                 player = player,
+                stats = stats,
             )
         }
         _handles.value = _handles.value + handle
@@ -149,14 +159,12 @@ class PlayerManager(
         _foreground.value = null
     }
 
-    private fun buildPlayer(streamUrl: String): ExoPlayer {
+    private fun buildPlayer(streamUrl: String, bandwidthMeter: DefaultBandwidthMeter): ExoPlayer {
         val player = ExoPlayer.Builder(context)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(
-                    DefaultDataSource.Factory(
-                        context,
-                        OkHttpDataSource.Factory(http.callFactory()),
-                    ),
+                    DefaultDataSource.Factory(context, OkHttpDataSource.Factory(http.callFactory()))
+                        .setTransferListener(bandwidthMeter),
                 ),
             )
             .build()
@@ -185,5 +193,23 @@ class PlayerManager(
 
     companion object {
         const val MAX_PLAYERS = 3
+    }
+}
+
+/** 码率/流量统计：监听带宽计采样，供 stats 面板读取。 */
+class PlayerStats(meter: DefaultBandwidthMeter) : BandwidthMeter.EventListener {
+
+    var totalBytes: Long = 0L
+        private set
+    var kbps: Int = 0
+        private set
+
+    init {
+        meter.addEventListener(android.os.Handler(android.os.Looper.getMainLooper()), this)
+    }
+
+    override fun onBandwidthSample(elapsedMs: Int, bytes: Long, bitrate: Long) {
+        totalBytes += bytes
+        kbps = (bitrate / 1000).toInt()
     }
 }
