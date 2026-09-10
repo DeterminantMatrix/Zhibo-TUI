@@ -45,6 +45,15 @@ interface FollowerDao {
     @Query("DELETE FROM followers")
     suspend fun clear()
 
+    @androidx.room.Update
+    suspend fun update(item: FollowerEntity)
+
+    @Query("DELETE FROM followers WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("SELECT * FROM followers WHERE id = :id")
+    suspend fun getById(id: Long): FollowerEntity?
+
     @Transaction
     suspend fun replaceAll(items: List<FollowerEntity>) {
         clear()

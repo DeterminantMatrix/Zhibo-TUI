@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,35 +19,52 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import com.determinantmatrix.zhibo.FollowersViewModel
 import com.determinantmatrix.zhibo.ZhiboApp
 import com.determinantmatrix.zhibo.core.monitor.CheckState
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** 平台品牌色（头像底色）。 */
-private fun platformColor(platform: String): Color = when (platform.lowercase()) {
+fun platformColor(platform: String): Color = when (platform.lowercase()) {
     "bilibili" -> Color(0xFF00A1D6)
     "douyu" -> Color(0xFFFF5D23)
     "huya" -> Color(0xFFFF7C00)
@@ -58,7 +75,7 @@ private fun platformColor(platform: String): Color = when (platform.lowercase())
     else -> Color(0xFF607D8B)
 }
 
-private fun platformBadge(platform: String): String = when (platform.lowercase()) {
+fun platformBadge(platform: String): String = when (platform.lowercase()) {
     "bilibili" -> "B"
     "douyu" -> "斗"
     "huya" -> "虎"
@@ -69,7 +86,6 @@ private fun platformBadge(platform: String): String = when (platform.lowercase()
     else -> "直"
 }
 
-/** 相对时间（对齐 nodyssey 的 "7min ago" 习惯）。 */
 internal fun relativeTime(checkedAtMillis: Long, nowMillis: Long = System.currentTimeMillis()): String {
     val delta = ((nowMillis - checkedAtMillis) / 1000).coerceAtLeast(0)
     return when {
@@ -80,51 +96,53 @@ internal fun relativeTime(checkedAtMillis: Long, nowMillis: Long = System.curren
     }
 }
 
+private val playScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
 /**
- * 首页：顶部标签 chips（按关注标签分组）+ 直播间卡片流 + 右下角"添加关注"。
- * 点卡片：在线直接播放；未开播给出提示。
+ * 首页：顶部标签 chips（按关注标签分组）+ 直播间卡片流 + "添加关注"。
+ * 卡片交互：轻点=播放（在线）；右滑到底=删除；左滑到底=编辑。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(vm: FollowersViewModel = viewModel()) {
-    val followers by vm.followers.collectAsState()
+fun HomeScreen(vm: FollowersViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
+    val rows by vm.followers.collectAsState()
     val statuses by ZhiboApp.instance.engineController.engine.statuses.collectAsState()
     val message by vm.message.collectAsState()
 
     var selectedTag by remember { mutableStateOf("全部") }
-    val now = remember(statuses) { System.currentTimeMillis() }
+    var editTarget by remember { mutableStateOf<FollowersViewModel.FollowerRow?>(null) }
+    val now = remember(rows) { System.currentTimeMillis() }
 
-    val tags = remember(followers) {
+    val tags = remember(rows) {
         val set = linkedSetOf<String>()
-        followers.forEach { f -> f.tags.forEach { set.add(it) } }
+        rows.forEach { r -> r.follower.tags.forEach { set.add(it) } }
         listOf("全部") + set.toList()
     }
     val visible = if (selectedTag == "全部") {
-        followers
+        rows
     } else {
-        followers.filter { f -> selectedTag in f.tags }
+        rows.filter { r -> selectedTag in r.follower.tags }
     }
 
+    val clickScope = rememberCoroutineScope()
     val pickFollowersCsv = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(vm::importFollowersCsv) }
 
     Scaffold(
         topBar = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    tags.forEach { tag ->
-                        FilterChip(
-                            selected = tag == selectedTag,
-                            onClick = { selectedTag = tag },
-                            label = { Text(tag) },
-                        )
-                    }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                tags.forEach { tag ->
+                    FilterChip(
+                        selected = tag == selectedTag,
+                        onClick = { selectedTag = tag },
+                        label = { Text(tag) },
+                    )
                 }
             }
         },
@@ -149,26 +167,23 @@ fun HomeScreen(vm: FollowersViewModel = viewModel()) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(visible, key = { it.url }) { f ->
-                    val status = statuses[f.url]
-                    val state = status?.state
-                    LiveCard(
-                        name = f.name,
-                        platform = f.platform,
-                        title = status?.title.orEmpty(),
-                        state = state,
-                        quality = f.quality,
-                        checkedText = status?.checkedAtMillis?.takeIf { it > 0 }
-                            ?.let { relativeTime(it, now) } ?: "",
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(rows, key = { it.id }) { row ->
+                    val status = statuses[row.follower.url]
+                    LiveSwipeCard(
+                        row = row,
+                        status = status,
+                        now = now,
+                        onPlay = { clickScope.launch { ZhiboApp.instance.playerManager.play(row.follower) } },
+                        onEdit = { editTarget = row },
+                        onDelete = { vm.deleteFollower(row.id) },
                         onClick = {
-                            if (state == CheckState.LIVE) {
-                                clickScopePlay { ZhiboApp.instance.playerManager.play(f) }
+                            if (status?.state == CheckState.LIVE) {
+                                clickScope.launch { ZhiboApp.instance.playerManager.play(row.follower) }
                             } else {
-                                vm.notify(f.name + if (f.enabled) " 未开播或未检测到在线" else " 已停用")
+                                vm.notify(
+                                    row.follower.name + if (row.follower.enabled) " 未开播或未检测到在线" else " 已停用",
+                                )
                             }
                         },
                     )
@@ -176,18 +191,92 @@ fun HomeScreen(vm: FollowersViewModel = viewModel()) {
             }
         }
     }
+
+    editTarget?.let { row ->
+        EditFollowerDialog(
+            initial = row.follower,
+            onDismiss = { editTarget = null },
+            onSave = { edited ->
+                vm.updateFollower(row.id, edited)
+                editTarget = null
+            },
+        )
+    }
 }
 
-/** 供 FAB/卡片回调使用的协程作用域持有者。 */
-private val playScope = kotlinx.coroutines.CoroutineScope(
-    kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob(),
-)
+/**
+ * 可滑动卡片：右滑过半松手=删除；左滑过半松手=编辑（弹回并打开编辑框）。
+ * 自研拖动（detectHorizontalDragGestures），不依赖 material3 SwipeToDismissBox。
+ */
+@Composable
+private fun LiveSwipeCard(
+    row: FollowersViewModel.FollowerRow,
+    status: com.determinantmatrix.zhibo.core.monitor.FollowerStatus?,
+    now: Long,
+    onPlay: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onClick: () -> Unit,
+) {
+    val f = row.follower
+    var offsetX by remember { mutableFloatStateOf(0f) }
 
-internal fun clickScopePlay(block: suspend () -> Unit) {
-    playScope.launch { block() }
+    Box(modifier = Modifier.fillMaxSize()) {
+        // 滑动背景：右滑红色删除、左滑紫色编辑
+        if (abs(offsetX) > 8f) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(if (offsetX > 0) Color(0xFFD64541) else Color(0xFF5B5BD6))
+                    .padding(horizontal = 28.dp),
+                contentAlignment = if (offsetX > 0) Alignment.CenterStart else Alignment.CenterEnd,
+            ) {
+                Text(
+                    if (offsetX > 0) "松手删除" else "松手编辑",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .pointerInput(row.id) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount).coerceIn(-720f, 720f)
+                        },
+                        onDragEnd = {
+                            if (offsetX >= 560f) onDelete() else if (offsetX <= -560f) onEdit()
+                            offsetX = 0f
+                        },
+                    )
+                }
+                .background(MaterialTheme.colorScheme.surface)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LiveCard(
+                name = f.name,
+                platform = f.platform,
+                title = status?.title.orEmpty(),
+                state = status?.state,
+                quality = f.quality,
+                enabled = f.enabled,
+                checkedText = status?.checkedAtMillis?.takeIf { it > 0 }
+                    ?.let { relativeTime(it, now) } ?: "",
+                onClick = onClick,
+                onPlay = onPlay,
+            )
+        }
+    }
 }
 
-/** 单张直播间卡片 — 布局对齐 nodyssey 的帖子行。 */
+/** 单张直播间卡片 — 布局对齐 nodyssey 的帖子行，右侧显式播放按钮。 */
 @Composable
 private fun LiveCard(
     name: String,
@@ -195,8 +284,10 @@ private fun LiveCard(
     title: String,
     state: CheckState?,
     quality: String,
+    enabled: Boolean,
     checkedText: String,
     onClick: () -> Unit,
+    onPlay: () -> Unit,
 ) {
     val (dotColor, stateText) = when (state) {
         CheckState.LIVE -> Color(0xFF2E9E44) to "在线"
@@ -210,8 +301,8 @@ private fun LiveCard(
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 头像：平台色圆角方块 + 首字 + 在线角标
         Box(modifier = Modifier.size(52.dp)) {
             Box(
                 modifier = Modifier
@@ -259,7 +350,6 @@ private fun LiveCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // 状态胶囊（模仿分类标签胶囊）
                 Text(
                     stateText,
                     style = MaterialTheme.typography.labelSmall,
@@ -282,6 +372,22 @@ private fun LiveCard(
                 }
             }
         }
-        Spacer(Modifier.width(2.dp))
+        if (state == CheckState.LIVE) {
+            IconButton(onClick = onPlay) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "播放",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp),
+                )
+            }
+        }
+        if (!enabled) {
+            Text(
+                "已停用",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

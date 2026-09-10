@@ -28,9 +28,43 @@ class FollowersViewModel : ViewModel() {
     private val dao = ZhiboApp.instance.database.followerDao()
     private val settingsRepo = ZhiboApp.instance.settings
 
-    val followers: StateFlow<List<Follower>> = dao.observeAll()
-        .map { entities -> entities.map { it.toDomain() } }
+    /** UI 行：Room id + 域模型（编辑/删除需要 id 定位）。 */
+    data class FollowerRow(val id: Long, val follower: Follower)
+
+    val followers: StateFlow<List<FollowerRow>> = dao.observeAll()
+        .map { entities -> entities.map { FollowerRow(it.id, it.toDomain()) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 编辑保存：更新 Room 中对应行。 */
+    fun updateFollower(id: Long, edited: Follower) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val entity = dao.getById(id) ?: throw IllegalStateException("关注项不存在")
+                    dao.update(edited.copy().let { entity.copy(
+                        name = edited.name,
+                        plugin = edited.plugin,
+                        url = edited.url,
+                        platform = edited.platform,
+                        quality = edited.quality,
+                        tags = edited.tags.joinToString("|"),
+                        sportId = edited.sportId,
+                        enabled = edited.enabled,
+                        fallbackPlugins = edited.fallbackPlugins.joinToString("|"),
+                    ) })
+                }
+            }.onSuccess { _message.value = "已保存修改" }
+                .onFailure { _message.value = "保存失败：${it.message?.take(80)}" }
+        }
+    }
+
+    /** 删除关注项。 */
+    fun deleteFollower(id: Long) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { dao.deleteById(id) }
+            _message.value = "已删除"
+        }
+    }
 
     val settings: StateFlow<AppConfig> = settingsRepo.config
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppConfig())
