@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Icon
@@ -118,6 +119,8 @@ fun HomeScreen(vm: FollowersViewModel = androidx.lifecycle.viewmodel.compose.vie
         rows.forEach { r -> r.follower.tags.forEach { set.add(it) } }
         listOf("全部") + set.toList()
     }
+    fun tagCount(tag: String) = if (tag == "全部") rows.size
+        else rows.count { r -> tag in r.follower.tags }
     val visible = if (selectedTag == "全部") {
         rows
     } else {
@@ -186,6 +189,10 @@ fun HomeScreen(vm: FollowersViewModel = androidx.lifecycle.viewmodel.compose.vie
                                 )
                             }
                         },
+                    )
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                     )
                 }
             }
@@ -299,11 +306,11 @@ private fun LiveCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(52.dp)) {
+        Box(modifier = Modifier.size(44.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -313,7 +320,7 @@ private fun LiveCard(
                 Text(
                     platformBadge(platform),
                     color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -372,15 +379,16 @@ private fun LiveCard(
                 }
             }
         }
-        if (state == CheckState.LIVE) {
-            IconButton(onClick = onPlay) {
-                Icon(
-                    Icons.Filled.PlayArrow,
-                    contentDescription = "播放",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
+        IconButton(onClick = onPlay) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = "播放",
+                tint = when (state) {
+                    CheckState.LIVE -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(30.dp),
+            )
         }
         if (!enabled) {
             Text(
@@ -391,3 +399,4 @@ private fun LiveCard(
         }
     }
 }
+

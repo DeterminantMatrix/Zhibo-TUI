@@ -33,9 +33,20 @@ import com.determinantmatrix.zhibo.ui.SettingsScreen
 
 class MainActivity : ComponentActivity() {
 
+    override fun onResume() {
+        super.onResume()
+        // 监控自恢复：已授予通知权限则随 App 启动自动恢复轮询（直播监控的核心预期）
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            startMonitoring()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 首次启动先请求通知权限（Android 13+），保证开播通知可达
         setContent {
             val themeMode by ZhiboApp.instance.settings.themeMode.collectAsState(initial = "system")
             ZhiboTheme(

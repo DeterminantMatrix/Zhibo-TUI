@@ -46,6 +46,29 @@ fun FunctionsScreen() {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
+                Text("解析包", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "视频地址由 App 内置解析器直接获取，无需安装外部工具；" +
+                        "解析逻辑随 App 更新升级。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        ResolverRow("B站 / 斗鱼 / 虎牙", "内置 · 直连可用")
+                        ResolverRow("抖音", "内置 · a_bogus 签名 · 直连可用")
+                        ResolverRow("FS1（飞速直播）", "内置 · 需授权（设置 → FS1 配置导入/授权采集）")
+                        ResolverRow("Twitch", "内置 · 需代理（设置 → 平台代理）")
+                        ResolverRow("YouTube", "内置嗅探兜底 · 建议浏览器路径")
+                    }
+                }
+            }
+            item {
                 Text("监控服务", style = MaterialTheme.typography.titleMedium)
             }
             item {
@@ -116,5 +139,20 @@ fun FunctionsScreen() {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ResolverRow(name: String, statusText: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(name, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            statusText,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
