@@ -1,6 +1,6 @@
 """测试插件基类"""
 import pytest
-from plugins.base import LiveInfo, LiveStreamPlugin
+from zhibo.plugins.base import LiveInfo, LiveStreamPlugin
 
 
 class TestLiveInfo:

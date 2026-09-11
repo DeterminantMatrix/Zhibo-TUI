@@ -1,7 +1,8 @@
 """测试插件注册系统"""
-from unittest.mock import MagicMock, patch
-from plugins import _plugins, register_plugin, get_plugin, list_plugins
-from plugins.base import LiveInfo, LiveStreamPlugin
+from unittest.mock import patch
+
+from zhibo.plugins import BUILTIN_PLUGIN_MODULES, _plugins, register_plugin, get_plugin, list_plugins
+from zhibo.plugins.base import LiveInfo, LiveStreamPlugin
 
 
 class FakePlugin(LiveStreamPlugin):
@@ -29,9 +30,22 @@ class TestPluginRegistry:
         assert "fake" in list_plugins()
 
     def test_discover_plugins(self):
-        """模拟 discover_plugins 导入过程"""
-        with patch("builtins.__import__") as mock_import:
-            from plugins import discover_plugins
-            discover_plugins()
-            # 应该被调用多次（*_plugin.py 文件）
-            assert mock_import.call_count >= 1
+        """只加载受控的内置模块。"""
+        with patch("zhibo.plugins.importlib.import_module") as mock_import:
+            from zhibo.plugins import discover_plugins
+
+            assert discover_plugins() == {}
+            assert [call.args[0] for call in mock_import.call_args_list] == list(BUILTIN_PLUGIN_MODULES)
+
+    def test_discover_plugins_reports_one_broken_module(self):
+        from zhibo.plugins import discover_plugins
+
+        def import_module(name):
+            if name == BUILTIN_PLUGIN_MODULES[0]:
+                raise ImportError("missing optional dependency")
+
+        with patch("zhibo.plugins.importlib.import_module", side_effect=import_module):
+            failures = discover_plugins()
+
+        assert BUILTIN_PLUGIN_MODULES[0] in failures
+        assert "ImportError" in failures[BUILTIN_PLUGIN_MODULES[0]]

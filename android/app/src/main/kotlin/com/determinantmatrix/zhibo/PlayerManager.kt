@@ -1,0 +1,215 @@
+package com.determinantmatrix.zhibo
+
+import android.content.Context
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.upstream.BandwidthMeter
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.determinantmatrix.zhibo.core.model.Follower
+import com.determinantmatrix.zhibo.core.network.Http
+import com.determinantmatrix.zhibo.core.resolver.ResolverRegistry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
+
+/**
+ * 播放管理器 — 对齐桌面"最多 3 个直播间同时播放"。
+ * 每个 PlayerHandle 一个 ExoPlayer 实例；前台只显示一个，其余继续出声。
+ */
+class PlayerManager(
+    private val context: Context,
+    private val registry: ResolverRegistry,
+) {
+
+    class PlayerHandle(
+        val followerUrl: String,
+        val name: String,
+        val platform: String,
+        var quality: String,
+        val streamUrl: String,
+        val player: ExoPlayer,
+        val stats: PlayerStats,
+    )
+
+    private val _handles = MutableStateFlow<List<PlayerHandle>>(emptyList())
+    val handles: StateFlow<List<PlayerHandle>> = _handles
+
+    private val _foreground = MutableStateFlow<PlayerHandle?>(null)
+    val foreground: StateFlow<PlayerHandle?> = _foreground
+
+    private val _message = MutableStateFlow("")
+    val message: StateFlow<String> = _message
+
+    private val http = Http()
+
+    /** 前台切换：不新建播放器，只换显示焦点。 */
+    fun show(handle: PlayerHandle) {
+        _foreground.value = handle
+    }
+
+    /** 回列表页；其余播放器继续在后台播放。 */
+    fun showList() {
+        _foreground.value = null
+    }
+
+    fun setMessage(text: String) {
+        _message.value = text
+    }
+
+    suspend fun play(follower: Follower, quality: String = follower.quality) {
+        val existing = _handles.value.firstOrNull { it.followerUrl == follower.url }
+        if (existing != null) {
+            _foreground.value = existing
+            return
+        }
+        if (_handles.value.size >= MAX_PLAYERS) {
+            _message.value = "最多 $MAX_PLAYERS 个直播间同时播放"
+            return
+        }
+        _message.value = "正在获取播放地址…"
+        val resolved = runCatching {
+            val resolver = registry.get("streamget")
+                ?: throw IllegalStateException("streamget 插件未注册")
+            resolver.getStreamUrl(follower.url, quality)
+        }
+        val streamUrl = resolved.getOrElse { failure ->
+            _message.value = "播放失败：${failure.message?.take(120)}"
+            return
+        }
+        addHandle(follower.url, follower.name, follower.platform, quality, streamUrl)
+        _message.value = "${follower.name} 播放中（$quality）"
+    }
+
+    /** 播放嗅探到的直连地址（M3 浏览器兜底通道）。 */
+    suspend fun playDirect(name: String, platform: String, url: String) {
+        if (_handles.value.size >= MAX_PLAYERS) {
+            _message.value = "最多 $MAX_PLAYERS 个直播间同时播放"
+            return
+        }
+        addHandle(url, name, platform, "嗅探", url)
+        _message.value = "$name 播放中（嗅探流）"
+    }
+
+    private suspend fun addHandle(
+        followerUrl: String,
+        name: String,
+        platform: String,
+        quality: String,
+        streamUrl: String,
+    ) {
+        val handle = withContext(Dispatchers.Main) {
+            val meter = DefaultBandwidthMeter.Builder(context).build()
+            val player = buildPlayer(streamUrl, meter)
+            val stats = PlayerStats(meter)
+            PlayerHandle(
+                followerUrl = followerUrl,
+                name = name,
+                platform = platform,
+                quality = quality,
+                streamUrl = streamUrl,
+                player = player,
+                stats = stats,
+            )
+        }
+        _handles.value = _handles.value + handle
+        _foreground.value = handle
+    }
+
+    suspend fun switchQuality(handle: PlayerHandle, newQuality: String) {
+        if (newQuality == handle.quality) return
+        _message.value = "切换画质到 $newQuality…"
+        val resolved = runCatching {
+            registry.get("streamget")!!.getStreamUrl(handle.followerUrl, newQuality)
+        }
+        val newUrl = resolved.getOrElse { failure ->
+            _message.value = "切换失败：${failure.message?.take(120)}"
+            return
+        }
+        withContext(Dispatchers.Main) {
+            handle.quality = newQuality
+            handle.player.setMediaItem(buildMediaItem(newUrl))
+            handle.player.prepare()
+            handle.player.playWhenReady = true
+        }
+        _message.value = "${handle.name} 已切换到 $newQuality"
+    }
+
+    fun stop(handle: PlayerHandle) {
+        withContextMain {
+            handle.player.stop()
+            handle.player.release()
+        }
+        _handles.value = _handles.value - handle
+        if (_foreground.value == handle) _foreground.value = _handles.value.lastOrNull()
+    }
+
+    fun stopAll() {
+        _handles.value.forEach { handle ->
+            withContextMain {
+                handle.player.stop()
+                handle.player.release()
+            }
+        }
+        _handles.value = emptyList()
+        _foreground.value = null
+    }
+
+    private fun buildPlayer(streamUrl: String, bandwidthMeter: DefaultBandwidthMeter): ExoPlayer {
+        val player = ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(
+                    DefaultDataSource.Factory(context, OkHttpDataSource.Factory(http.callFactory()))
+                        .setTransferListener(bandwidthMeter),
+                ),
+            )
+            .build()
+        player.setMediaItem(buildMediaItem(streamUrl))
+        player.prepare()
+        player.playWhenReady = true
+        return player
+    }
+
+    private fun buildMediaItem(url: String): MediaItem {
+        val path = url.substringBefore('?').lowercase()
+        val mime = when {
+            path.endsWith(".m3u8") -> MimeTypes.APPLICATION_M3U8
+            // FLV 无专用常量：交给 DefaultExtractorsFactory 按内容嗅探（含 FlvExtractor）
+            else -> null
+        }
+        val builder = MediaItem.Builder().setUri(url)
+        mime?.let { builder.setMimeType(it) }
+        return builder.build()
+    }
+
+    private fun withContextMain(block: () -> Unit) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) block()
+        else android.os.Handler(android.os.Looper.getMainLooper()).post(block)
+    }
+
+    companion object {
+        const val MAX_PLAYERS = 3
+    }
+}
+
+/** 码率/流量统计：监听带宽计采样，供 stats 面板读取。 */
+class PlayerStats(meter: DefaultBandwidthMeter) : BandwidthMeter.EventListener {
+
+    var totalBytes: Long = 0L
+        private set
+    var kbps: Int = 0
+        private set
+
+    init {
+        meter.addEventListener(android.os.Handler(android.os.Looper.getMainLooper()), this)
+    }
+
+    override fun onBandwidthSample(elapsedMs: Int, bytes: Long, bitrate: Long) {
+        totalBytes += bytes
+        kbps = (bitrate / 1000).toInt()
+    }
+}

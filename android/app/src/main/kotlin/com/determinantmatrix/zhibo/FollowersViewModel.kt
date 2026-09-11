@@ -1,0 +1,168 @@
+package com.determinantmatrix.zhibo
+
+import android.net.Uri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.determinantmatrix.zhibo.core.database.toDomain
+import com.determinantmatrix.zhibo.core.database.toEntity
+import com.determinantmatrix.zhibo.core.resolver.Fs1Auth
+import com.determinantmatrix.zhibo.core.model.AppConfig
+import com.determinantmatrix.zhibo.core.model.Follower
+import com.determinantmatrix.zhibo.core.model.FollowersCsv
+import com.determinantmatrix.zhibo.core.model.SettingsCsv
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * M0 验证用 ViewModel：CSV 导入 → Room，Room → CSV 导出，
+ * 与桌面版 followers.csv / settings.csv 无损互通。
+ */
+class FollowersViewModel : ViewModel() {
+
+    private val dao = ZhiboApp.instance.database.followerDao()
+    private val settingsRepo = ZhiboApp.instance.settings
+
+    /** UI 行：Room id + 域模型（编辑/删除需要 id 定位）。 */
+    data class FollowerRow(val id: Long, val follower: Follower)
+
+    val followers: StateFlow<List<FollowerRow>> = dao.observeAll()
+        .map { entities -> entities.map { FollowerRow(it.id, it.toDomain()) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** 编辑保存：更新 Room 中对应行。 */
+    fun updateFollower(id: Long, edited: Follower) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val entity = dao.getById(id) ?: throw IllegalStateException("关注项不存在")
+                    dao.update(edited.copy().let { entity.copy(
+                        name = edited.name,
+                        plugin = edited.plugin,
+                        url = edited.url,
+                        platform = edited.platform,
+                        quality = edited.quality,
+                        tags = edited.tags.joinToString("|"),
+                        sportId = edited.sportId,
+                        enabled = edited.enabled,
+                        fallbackPlugins = edited.fallbackPlugins.joinToString("|"),
+                    ) })
+                }
+            }.onSuccess { _message.value = "已保存修改" }
+                .onFailure { _message.value = "保存失败：${it.message?.take(80)}" }
+        }
+    }
+
+    /** 删除关注项。 */
+    fun deleteFollower(id: Long) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { dao.deleteById(id) }
+            _message.value = "已删除"
+        }
+    }
+
+    val settings: StateFlow<AppConfig> = settingsRepo.config
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppConfig())
+
+    private val _message = MutableStateFlow("就绪")
+    val message: StateFlow<String> = _message
+
+    fun notify(text: String) {
+        _message.value = text
+    }
+
+    fun importFs1Yaml(uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = ZhiboApp.instance.contentResolver.openInputStream(uri)!!
+                        .bufferedReader(Charsets.UTF_8).readText()
+                    val auth = Fs1Auth.fromYamlText(text)
+                        ?: throw IllegalArgumentException("未在文件中找到 FS1 授权（config.token）")
+                    ZhiboApp.instance.credentials.saveFs1Auth(auth)
+                    auth
+                }
+            }
+            result.fold(
+                onSuccess = { _message.value = "FS1 授权已导入并生效（站点 ${it.siteUrl.substringAfter("//")}）" },
+                onFailure = { _message.value = "FS1 导入失败：${it.message?.take(80)}" },
+            )
+        }
+    }
+
+    fun importFollowersCsv(uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = ZhiboApp.instance.contentResolver.openInputStream(uri)!!
+                        .bufferedReader(Charsets.UTF_8).readText()
+                    val decoded = FollowersCsv.decode(text)
+                    dao.replaceAll(decoded.followers.mapIndexed { i, f -> f.toEntity(i) })
+                    decoded
+                }
+            }
+            result.fold(
+                onSuccess = { (imported, warnings) ->
+                    val warningText = if (warnings.isEmpty()) "" else "；警告：" + warnings.joinToString("，")
+                    _message.value = "已导入 ${imported.size} 个关注项$warningText"
+                },
+                onFailure = { _message.value = "导入失败：${it.message}" },
+            )
+        }
+    }
+
+    fun exportFollowersCsv(uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = FollowersCsv.encode(dao.getAll().map { it.toDomain() })
+                    ZhiboApp.instance.contentResolver.openOutputStream(uri, "wt")!!
+                        .use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                }
+            }
+            result.fold(
+                onSuccess = { _message.value = "已导出 ${followers.value.size} 个关注项" },
+                onFailure = { _message.value = "导出失败：${it.message}" },
+            )
+        }
+    }
+
+    fun importSettingsCsv(uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = ZhiboApp.instance.contentResolver.openInputStream(uri)!!
+                        .bufferedReader(Charsets.UTF_8).readText()
+                    val cfg = SettingsCsv.decode(text)
+                    settingsRepo.save(cfg)
+                    cfg
+                }
+            }
+            result.fold(
+                onSuccess = { _message.value = "已导入设置：轮询 ${it.pollInterval}s，并发 ${it.maxConcurrentChecks}" },
+                onFailure = { _message.value = "设置导入失败：${it.message}" },
+            )
+        }
+    }
+
+    fun exportSettingsCsv(uri: Uri) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = SettingsCsv.encode(settingsRepo.current())
+                    ZhiboApp.instance.contentResolver.openOutputStream(uri, "wt")!!
+                        .use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                }
+            }
+            result.fold(
+                onSuccess = { _message.value = "设置已导出" },
+                onFailure = { _message.value = "设置导出失败：${it.message}" },
+            )
+        }
+    }
+}
