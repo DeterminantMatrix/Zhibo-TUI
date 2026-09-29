@@ -790,7 +790,14 @@ class UpdateCenterScreen(ModalBase):
                 tone = "green"
             body.append(f"状态：{hint}", style=tone)
         self.query_one("#ucDetailText", Static).update(body)
-        self._content.display = item.get("value") in {"fs1", "bilibili_cookie"}
+        self._content.display = item.get("value") in {"fs1", "haixing", "bilibili_cookie"}
+        placeholders = {
+            "fs1": "粘贴浏览器复制的 FS /v1/room 请求 curl",
+            "haixing": "粘贴海星体育镜像域名（如 hxty5.com），可一行多个；会替换现有域名池",
+            "bilibili_cookie": "粘贴 Netscape cookies.txt 内容",
+        }
+        if item.get("value") in placeholders:
+            self._content.placeholder = placeholders[item["value"]]
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.row_key is not None and event.row_key.value:

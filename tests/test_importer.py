@@ -191,3 +191,43 @@ def test_build_follower_rejects_credential_bearing_url_before_plugin_lookup(monk
 
     with pytest.raises(ValueError, match="不能包含"):
         asyncio.run(build_follower_from_url(url))
+
+
+def test_detect_platform_recognises_haixing_mirrors():
+    assert detect_platform("https://hxty4.com/live/1733") == ("haixing", "haixing", [])
+    assert detect_platform("https://www.hxty5.com/live/42?from=home") == ("haixing", "haixing", [])
+    assert detect_platform("https://www.haixing4.com/live/7") == ("haixing", "haixing", [])
+
+
+def test_build_follower_from_haixing_url_stores_room_id(monkeypatch):
+    monkeypatch.setattr(importer, "get_plugin", lambda name: None)
+
+    follower = asyncio.run(build_follower_from_url("https://www.hxty5.com/live/1733", "体育"))
+
+    assert follower.name == "海星房间 1733"
+    assert follower.plugin == "haixing"
+    assert follower.platform == "haixing"
+    assert follower.url == "1733"
+    assert follower.fallback_plugins == []
+
+
+def test_build_follower_from_haixing_url_uses_room_title(monkeypatch):
+    class FakePlugin:
+        name = "haixing"
+
+        async def check_live(self, url, **kwargs):
+            from zhibo.plugins.base import LiveInfo
+
+            return LiveInfo(
+                is_live=True,
+                anchor_name="鬼哥侃球",
+                title="非洲杯 布隆迪 VS 阿尔及利亚",
+                stream_url="https://pull.example/x.m3u8",
+            )
+
+    monkeypatch.setattr(importer, "get_plugin", lambda name: FakePlugin())
+
+    follower = asyncio.run(build_follower_from_url("https://hxty4.com/live/1733"))
+
+    assert follower.name == "非洲杯 布隆迪 VS 阿尔及利亚"
+    assert follower.url == "1733"

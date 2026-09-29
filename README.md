@@ -4,9 +4,10 @@
 
 ## 功能
 
-- 监控斗鱼、虎牙、抖音、B 站、Twitch、YouTube、小红书与 FS1 等直播源
+- 监控斗鱼、虎牙、抖音、B 站、Twitch、YouTube、小红书、FS1 与海星体育等直播源
 - 标签页、搜索和在线 / 离线 / 异常状态筛选
-- 多插件回退：streamlink、streamget、yt-dlp 与 FS1 专用插件
+- 多插件回退：streamlink、streamget、yt-dlp、FS1 与海星体育专用插件
+- 海星体育镜像域名池：按序尝试 + 失败冷却降级，域名轮换后在更新中心粘贴新镜像即可
 - 开播通知、系统托盘、最小化隐藏、mpv 播放
 - 从直播间 URL 导入关注项，以及 YouTube 格式选择下载
 
@@ -37,7 +38,7 @@ ZHIBO/
 ├── zhibo/               # 后端核心包
 │   ├── monitor.py       #   轮询调度、状态机、平台熔断退避
 │   ├── config.py        #   followers.csv / settings.csv 持久化与校验
-│   ├── plugins/         #   streamlink / streamget / yt-dlp / FS1 / B站插件
+│   ├── plugins/         #   streamlink / streamget / yt-dlp / FS1 / 海星 / B站插件
 │   └── ...              #   导入预览、代理、画质、工具更新、mpv 播放等
 ├── tests/               # pytest 测试套件
 ├── userscripts/         # 配套油猴脚本（FS1 授权导出）

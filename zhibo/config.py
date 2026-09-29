@@ -421,6 +421,18 @@ def _normalise_edit_url(value: Any, *, plugin: str, platform: str) -> str:
 
     if is_fs_room and _OPAQUE_ROOM_ID_RE.fullmatch(url):
         return url
+    # 海星体育与 FS1 同型：Follower.url 只存房间号。镜像域名频繁轮换但
+    # 房间号跨镜像互通，存完整 URL 反而会在轮换日集体失效。
+    if plugin == "haixing" or platform == "haixing":
+        from zhibo.plugins.haixing_plugin import parse_room_ref
+
+        try:
+            room_id, _domain_hint = parse_room_ref(url)
+        except ValueError:
+            raise _validation_error(
+                "url", "海星体育房间应为房间号或 /live/房间号 链接"
+            ) from None
+        return room_id
     if url.startswith("//"):
         url = "https:" + url
 
@@ -588,6 +600,8 @@ def validate_follower_edit(
     ).casefold()
     if plugin == "fs1" and not platform:
         platform = "fs1"
+    if plugin == "haixing" and not platform:
+        platform = "haixing"
 
     name = _edit_text(raw.get("name"), "name", required=True, maximum=_MAX_NAME_LENGTH)
     quality = _edit_text(

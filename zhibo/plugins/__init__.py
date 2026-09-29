@@ -9,6 +9,7 @@ _plugins: dict[str, LiveStreamPlugin] = {}
 # 发布版只加载项目自带的模块。扫描可写目录会让同步冲突或误放文件在启动时执行。
 BUILTIN_PLUGIN_MODULES = (
     "zhibo.plugins.fs1_plugin",
+    "zhibo.plugins.haixing_plugin",
     "zhibo.plugins.streamget_plugin",
     "zhibo.plugins.streamlink_plugin",
     "zhibo.plugins.yt_dlp_plugin",

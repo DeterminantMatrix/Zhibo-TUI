@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, unquote_plus, urlparse
 from zhibo.app_logging import is_sensitive_field
 from zhibo.plugins import get_plugin
 from zhibo.plugins.fs1_plugin import is_fs_site_url
+from zhibo.plugins.haixing_plugin import is_haixing_site_url, parse_room_ref
 from zhibo.models import Follower
 
 
@@ -70,6 +71,8 @@ def detect_platform(url: str) -> tuple[str, str, list[str]]:
     host = parsed.hostname.casefold()
     if is_fs_site_url(normalized_url):
         return "fs1", "fs1", []
+    if is_haixing_site_url(normalized_url):
+        return "haixing", "haixing", []
     for domain, platform, plugin, fallbacks in PLATFORM_RULES:
         if _host_matches(host, domain):
             return platform, plugin, fallbacks
@@ -124,13 +127,18 @@ async def build_follower_from_url(url: str, tag: str = "未分类") -> Follower:
     extra: dict = {}
     if platform == "fs1":
         room_url, extra = _fs_extra(url)
+    if platform == "haixing":
+        # 房间号跨镜像互通，只存房间号，避免域名轮换日集体失效。
+        room_url, _domain_hint = parse_room_ref(url)
 
     name = fallback_name(url)
+    if platform == "haixing":
+        name = f"海星房间 {room_url}"
     plugin = get_plugin(plugin_name)
     if plugin is not None:
         try:
             info = await plugin.check_live(room_url, platform=platform, quality="best", extra=extra)
-            if platform == "fs1":
+            if platform in {"fs1", "haixing"}:
                 name = info.title or info.anchor_name or name
             else:
                 name = info.anchor_name or name

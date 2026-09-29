@@ -44,7 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _UPDATE_CHECK_TARGETS = ("mpv", "ffmpeg", "uosc", "streamlink", "streamget", "yt-dlp")
 _UPDATE_EXECUTABLE_TARGETS = {
     "streamlink", "streamget", "yt-dlp", "mpv", "ffmpeg", "uosc", "fs1",
-    "bilibili_cookie",
+    "haixing", "bilibili_cookie",
 }
 
 
@@ -1040,6 +1040,11 @@ class MonitorBridge:
                 version = "内置配置适配器"
                 await self._record_update(target, version)
                 message = "FS1 配置已更新并重新载入"
+            elif target == "haixing":
+                await self._update_haixing(content)
+                version = "内置域名池适配器"
+                await self._record_update(target, version)
+                message = "海星体育镜像域名池已更新并重新载入"
             elif target == "uosc":
                 from zhibo.mpv_ui import check_uosc_update
 
@@ -1153,6 +1158,23 @@ class MonitorBridge:
         for key in sorted(applied):
             value = "***" if key in {"token", "authorization", "cookie", "imei", "dun_imei"} else applied[key]
             self._log(f"FS1 {key}: {redact_sensitive_text(value)}")
+
+    async def _update_haixing(self, content: str) -> None:
+        from zhibo.plugins import get_plugin
+        from zhibo.plugins.haixing_plugin import update_domains_from_text
+
+        if not content.strip():
+            raise ValueError("请粘贴海星体育镜像域名（如 hxty5.com），可一行多个")
+        self._progress("update", 25.0, "正在解析并更新海星体育域名池…")
+        applied = await asyncio.to_thread(update_domains_from_text, content)
+        plugin = get_plugin("haixing")
+        if plugin is not None and callable(getattr(plugin, "reload_config", None)):
+            plugin.reload_config()
+        service = self._require()
+        service.reset_platform_health("haixing")
+        self._emit_snapshot()
+        for key in sorted(applied):
+            self._log(f"海星体育 {key}: {redact_sensitive_text(applied[key])}")
 
     async def _update_package(self, package: str) -> None:
         if getattr(sys, "frozen", False):

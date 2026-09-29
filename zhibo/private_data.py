@@ -19,12 +19,14 @@ APP_DIR_NAME = "Zhibo"
 DATA_DIR_ENV_NAMES = ("ZHIBO_DATA_DIR", "ZHIBO_PRIVATE_DATA_DIR")
 COOKIE_FILE_ENV = "ZHIBO_COOKIE_FILE"
 FS_CONFIG_ENV = "ZHIBO_FS_CONFIG"
+HAIXING_CONFIG_ENV = "ZHIBO_HAIXING_CONFIG"
 LOG_FILE_ENV = "ZHIBO_LOG_FILE"
 
 __all__ = [
     "APP_DIR_NAME",
     "COOKIE_FILE_ENV",
     "FS_CONFIG_ENV",
+    "HAIXING_CONFIG_ENV",
     "LOG_FILE_ENV",
     "CredentialMigrationResult",
     "LegacyCredentialFile",
@@ -32,6 +34,7 @@ __all__ = [
     "cookie_file_path",
     "ensure_private_parent",
     "fs_config_path",
+    "haixing_config_path",
     "legacy_credential_files",
     "legacy_credentials_notice",
     "log_file_path",
@@ -99,6 +102,11 @@ def cookie_file_path(environ: Mapping[str, str] | None = None) -> Path:
 def fs_config_path(environ: Mapping[str, str] | None = None) -> Path:
     """Return the configured FS1 config path without opening it."""
     return _override_or_default(FS_CONFIG_ENV, Path("fs1") / "rooms.yaml", environ)
+
+
+def haixing_config_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the configured Haixing domain-pool config path without opening it."""
+    return _override_or_default(HAIXING_CONFIG_ENV, Path("haixing") / "domains.yaml", environ)
 
 
 def log_file_path(environ: Mapping[str, str] | None = None) -> Path:

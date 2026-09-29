@@ -53,6 +53,13 @@ UPDATE_TARGETS = (
         "restartRequired": False,
     },
     {
+        "value": "haixing",
+        "label": "海星体育域名",
+        "description": "海星体育镜像域名池，域名轮换后粘贴新镜像即可恢复。",
+        "kind": "configuration",
+        "restartRequired": False,
+    },
+    {
         "value": "bilibili_cookie",
         "label": "B站 Cookie",
         "description": "B站账号画质授权信息，仅保存到本机私有目录。",
@@ -60,6 +67,17 @@ UPDATE_TARGETS = (
         "restartRequired": False,
     },
 )
+
+
+def _haixing_pool_version() -> str:
+    """Describe the effective Haixing mirror pool for the update center."""
+    try:
+        from zhibo.plugins.haixing_plugin import configured_domains
+
+        domains = configured_domains()
+    except Exception:
+        return "域名池不可用"
+    return f"{len(domains)} 个镜像域名"
 
 
 @dataclass(frozen=True)
@@ -331,6 +349,8 @@ def update_items(path: Path | None = None) -> list[dict]:
             version = installed_version(distribution)
         elif item["value"] == "fs1":
             version = "内置配置适配器"
+        elif item["value"] == "haixing":
+            version = _haixing_pool_version()
         else:
             version = "本地凭据"
         is_remote_package = bool(distribution)
@@ -339,7 +359,7 @@ def update_items(path: Path | None = None) -> list[dict]:
             installed=version != "未安装",
             actionLabel=(
                 ("检查更新" if version != "未安装" else "未安装") if is_remote_package
-                else "更新配置" if item["value"] == "fs1"
+                else "更新配置" if item["value"] in {"fs1", "haixing"}
                 else "更新凭据"
             ),
             actionEnabled=True,
@@ -355,6 +375,7 @@ def update_items(path: Path | None = None) -> list[dict]:
             lastVersion=str(target_history.get("version") or ""),
             source=(
                 "本地配置" if item["value"] == "fs1"
+                else "本地域名池" if item["value"] == "haixing"
                 else "本地私有凭据" if item["value"] == "bilibili_cookie"
                 else "当前 Python 环境"
             ),

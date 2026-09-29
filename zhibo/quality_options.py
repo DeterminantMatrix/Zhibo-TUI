@@ -40,6 +40,16 @@ YTDLP_OPTIONS = (
     {"label": "360p", "value": "360p"},
 )
 
+# 海星体育 playAddr 档位：ori 原画 / ud 超清 / hd 高清 / sd 标清 / ld 流畅。
+HAIXING_OPTIONS = (
+    BEST,
+    {"label": "原画", "value": "ori"},
+    {"label": "超清", "value": "ud"},
+    {"label": "高清", "value": "hd"},
+    {"label": "标清", "value": "sd"},
+    {"label": "流畅", "value": "ld"},
+)
+
 
 def _plugin_key(plugin: str | None) -> str:
     value = str(plugin or "").strip().casefold().replace("-", "_")
@@ -64,6 +74,8 @@ def quality_options(
         source = STREAMLINK_OPTIONS
     elif plugin_key == "fs1":
         source = FS1_OPTIONS
+    elif plugin_key == "haixing":
+        source = HAIXING_OPTIONS
     elif plugin_key == "yt_dlp":
         source = YTDLP_OPTIONS
     else:
@@ -113,8 +125,21 @@ def quality_for_plugin(
         return requested
 
     folded = requested.casefold()
+    if target == "haixing":
+        if folded in {"best", "source", "od", "ori", "原画", "最高", "最高画质", "bd", "蓝光"}:
+            return "ori"
+        if folded in {"4k", "2160p", "2160p60", "1440p", "1440p60", "uhd", "超清"}:
+            return "ud"
+        if folded in {"1080p", "1080p60", "hd", "高清"}:
+            return "hd"
+        if folded in {"720p", "720p60", "480p", "sd", "标清"}:
+            return "sd"
+        if folded in {"worst", "360p", "ld", "流畅", "audio_only", "audio", "ad"}:
+            return "ld"
+        return "ori"
+
     if target == "streamget":
-        if folded in {"best", "source", "od", "原画", "最高", "最高画质"}:
+        if folded in {"best", "source", "od", "ori", "原画", "最高", "最高画质"}:
             return "OD"
         if folded in {"4k", "2160p", "2160p60", "1440p", "1440p60", "bd", "蓝光"}:
             return "BD"
@@ -132,7 +157,7 @@ def quality_for_plugin(
 
     if target == "streamlink":
         mapping = {
-            "od": "best", "bd": "best", "uhd": "1080p", "hd": "720p",
+            "od": "best", "ori": "best", "bd": "best", "uhd": "1080p", "hd": "720p",
             "sd": "480p", "ld": "360p", "ad": "audio_only",
             "原画": "best", "蓝光": "best", "超清": "1080p",
             "高清": "720p", "标清": "480p", "流畅": "360p",
