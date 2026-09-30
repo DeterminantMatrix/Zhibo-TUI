@@ -99,6 +99,46 @@ def test_userscript_export_rejects_untrusted_fs_domain():
         parse_fs1_export(raw)
 
 
+def test_userscript_export_accepts_rotating_apc_api_host():
+    """房间 API 域名随站点轮换（xzood6veuybwkr → fqwm8ntrpaxjvd），命名空间正则应放行。"""
+    assert is_trusted_api_url("https://apc.xzood6veuybwkr.com/v1/room")
+    assert is_trusted_api_url("https://apc.fqwm8ntrpaxjvd.com/v1/room")
+
+    raw = json.dumps(
+        {
+            "format": "zhibo.fs1-auth",
+            "version": 2,
+            "site_url": "https://www.fszb148.com",
+            "api_url": "https://apc.fqwm8ntrpaxjvd.com/v1/room",
+            "request_url": "https://apc.fqwm8ntrpaxjvd.com/v1/room?room_id=380348943&sport_id=1",
+            "authorization": "token-value",
+        }
+    )
+
+    parsed = parse_fs1_export(raw)
+    assert parsed["api_url"] == "https://apc.fqwm8ntrpaxjvd.com/v1/room"
+    assert parsed["site_url"] == "https://www.fszb148.com"
+
+
+def test_userscript_export_rejects_api_host_outside_namespace():
+    for api_url in (
+        "https://apc.attacker.net/v1/room",  # 顶级域不在命名空间
+        "https://evil.com/v1/room",  # 缺少 apc. 前缀
+        "https://apc.ab.com/v1/room",  # 随机标签过短
+    ):
+        raw = json.dumps(
+            {
+                "format": "zhibo.fs1-auth",
+                "version": 2,
+                "site_url": "https://www.fszb148.com",
+                "api_url": api_url,
+                "authorization": "token-value",
+            }
+        )
+        with pytest.raises(ValueError, match="API URL 不是受信任"):
+            parse_fs1_export(raw)
+
+
 def test_userscript_v2_export_falls_back_to_nested_snapshot_and_query():
     raw = "说明文字：\n```json\n" + json.dumps(
         {

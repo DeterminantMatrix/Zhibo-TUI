@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import webbrowser
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from PySide6.QtCore import QObject, Property, QSettings, QTimer, Signal, Slot
@@ -27,6 +28,23 @@ THEME_ORDER = ("blue", "black", "warm", "day")
 # 监控线程异常退出后的自动重启上限；一次成功轮询会清零计数。
 MAX_MONITOR_RESTARTS = 3
 MONITOR_RESTART_DELAY_MS = 3000
+# 同时播放的 mpv 直播间数量上限；同一直播间再次播放视为重启，不占新名额。
+MAX_PLAYING_ROOMS = 3
+MPV_REAP_INTERVAL_MS = 2000
+
+
+@dataclass
+class _PlayerSession:
+    """一个正在播放的 mpv 直播间：进程、CDN 候选与控制通道。"""
+
+    follower: int
+    candidates: list[str] = field(default_factory=list)
+    candidate_index: int = 0
+    payload: dict = field(default_factory=dict)
+    process: subprocess.Popen | None = None
+    ipc: str = ""
+
+
 THEME_LABELS = {
     "blue": "深海蓝",
     "black": "纯黑",
@@ -109,7 +127,7 @@ class QuickController(QObject):
     trayAvailabilityChanged = Signal()
     notificationRequested = Signal(int, str, str)
     sortChanged = Signal()
-    playingFollowerChanged = Signal()
+    playingFollowersChanged = Signal()
     logAppended = Signal(str)
     logTrimmed = Signal()
     progressChanged = Signal()
@@ -135,12 +153,7 @@ class QuickController(QObject):
         self._polling = False
         self._poll_count = 0
         self._notifications_enabled = True
-        self._player_process: subprocess.Popen | None = None
-        self._player_candidates: list[str] = []
-        self._player_candidate_index = 0
-        self._player_payload: dict = {}
-        self._player_generation = 0
-        self._player_ipc = ""
+        self._players: dict[int, _PlayerSession] = {}
         # 最近一条开播通知对应的主播；点击通知直接播放。
         self._notify_play_idx = -1
         # 对话框状态机独立管理（见 qt_quick/dialogs.py）。
@@ -155,8 +168,14 @@ class QuickController(QObject):
         # 高频进度（下载/更新）走专用属性，避免每次 tick 重建整个对话框数据。
         self._progress_value = -1.0
         self._progress_text = ""
-        self._playing_follower = -1
         self._ui_settings = settings or QSettings("Zhibo", "Zhibo Quick")
+        # 定期回收已退出的 mpv，释放播放名额，避免行高亮残留。
+        self._reap_timer = QTimer(self)
+        self._reap_timer.setInterval(MPV_REAP_INTERVAL_MS)
+        self._reap_timer.timeout.connect(self._reap_exited_players)
+        # 无 QApplication 的测试环境跳过启动，避免 Qt 定时器告警。
+        if QApplication.instance() is not None:
+            self._reap_timer.start()
         self._tray_available = True
         configured_theme = str(self._ui_settings.value("appearance/theme", "blue"))
         self._theme_name = configured_theme if configured_theme in THEME_PALETTES else "blue"
@@ -211,16 +230,10 @@ class QuickController(QObject):
     def logText(self):
         return "\n".join(self._log_lines)
 
-    @Property(int, notify=playingFollowerChanged)
-    def playingFollower(self):
-        return self._playing_follower
-
-    def _set_playing_follower(self, follower_index: int) -> None:
-        follower_index = int(follower_index)
-        if follower_index == self._playing_follower:
-            return
-        self._playing_follower = follower_index
-        self.playingFollowerChanged.emit()
+    @Property("QVariantList", notify=playingFollowersChanged)
+    def playingFollowers(self):
+        """正在播放的直播间索引列表（最多 MAX_PLAYING_ROOMS 个）。"""
+        return list(self._players)
 
     @Property(float, notify=progressChanged)
     def progressValue(self):
@@ -535,7 +548,7 @@ class QuickController(QObject):
             "tray": self._hide_to_tray,
             "quit": self.quitRequested.emit,
             "play": lambda: self._request_stream("play"),
-            "stop": self._stop_player,
+            "stop": self._stop_selected_player,
             "import": lambda: self._show_dialog(
                 "import",
                 {"stage": "form", "tag": "" if self._current_tag == "全部" else self._current_tag, "url": ""},
@@ -766,6 +779,7 @@ class QuickController(QObject):
 
     def shutdown(self) -> None:
         self._shutting_down = True
+        self._reap_timer.stop()
         self._stop_player()
         self.monitor.stop()
 
@@ -919,59 +933,85 @@ class QuickController(QObject):
             self.append_log("直播流地址已复制")
             return
         if purpose == "play":
-            self._stop_player()
-            self._set_playing_follower(int(data.get("idx", -1)))
-            self._player_ipc = new_mpv_ipc_path()
-            self._player_candidates = list(dict.fromkeys(str(item) for item in (data.get("urls") or [url]) if item))
-            self._player_candidate_index = 0
-            self._player_payload = data
-            self._start_next_player_candidate(self._player_generation)
+            self._start_playback(int(data.get("idx", -1)), data, url)
 
-    def _start_next_player_candidate(self, generation: int) -> None:
-        if generation != self._player_generation:
+    def _follower_name(self, follower_index: int) -> str:
+        row = next(
+            (row for row in self._snapshot.get("rows", []) if row.get("idx") == follower_index),
+            None,
+        )
+        return str(row.get("name", "")) if row else ""
+
+    def _start_playback(self, follower_index: int, data: dict, url: str) -> None:
+        if follower_index in self._players:
+            # 同一直播间再次播放：重启该会话，不占用新名额。
+            self._stop_session(follower_index)
+        elif len(self._players) >= MAX_PLAYING_ROOMS:
+            self.append_log(f"最多同时播放 {MAX_PLAYING_ROOMS} 个直播间，请先停止一个（选中后按 X）")
             return
-        if self._player_candidate_index >= len(self._player_candidates):
-            self._player_process = None
-            self._set_playing_follower(-1)
-            self.append_log(f"mpv 的全部 {len(self._player_candidates)} 条 CDN 候选均启动失败")
+        session = _PlayerSession(
+            follower=follower_index,
+            candidates=list(dict.fromkeys(str(item) for item in (data.get("urls") or [url]) if item)),
+            payload=dict(data),
+            ipc=new_mpv_ipc_path(),
+        )
+        self._players[follower_index] = session
+        self.playingFollowersChanged.emit()
+        self._start_next_player_candidate(session)
+
+    def _start_next_player_candidate(self, session: _PlayerSession) -> None:
+        if self._players.get(session.follower) is not session:
             return
-        url = self._player_candidates[self._player_candidate_index]
-        self._player_candidate_index += 1
+        if session.candidate_index >= len(session.candidates):
+            self._remove_session(session.follower, f"mpv 的全部 {len(session.candidates)} 条 CDN 候选均启动失败")
+            return
+        url = session.candidates[session.candidate_index]
+        session.candidate_index += 1
         try:
-            self._player_process = play_url(
+            session.process = play_url(
                 url,
-                title=str(self._player_payload.get("title", "Zhibo")),
-                headers=dict(self._player_payload.get("headers", {})),
-                proxy_url=str(self._player_payload.get("proxy", "")),
+                title=str(session.payload.get("title", "Zhibo")),
+                headers=dict(session.payload.get("headers", {})),
+                proxy_url=str(session.payload.get("proxy", "")),
                 use_cache=True,
-                ipc_path=self._player_ipc,
+                ipc_path=session.ipc,
             )
         except Exception as exc:
             self.append_log(f"CDN 候选启动失败：{exc}")
-            self._start_next_player_candidate(generation)
+            self._start_next_player_candidate(session)
             return
-        QTimer.singleShot(1000, lambda: self._verify_player_candidate(generation))
+        QTimer.singleShot(1000, lambda: self._verify_player_candidate(session))
 
-    def _verify_player_candidate(self, generation: int) -> None:
-        if generation != self._player_generation or self._player_process is None:
+    def _verify_player_candidate(self, session: _PlayerSession) -> None:
+        if self._players.get(session.follower) is not session or session.process is None:
             return
-        if self._player_process.poll() is None:
-            self.append_log("已启动 mpv 播放")
+        if session.process.poll() is None:
+            name = self._follower_name(session.follower)
+            self.append_log(f"已启动 mpv 播放：{name}" if name else "已启动 mpv 播放")
             return
-        code = self._player_process.returncode
-        self._player_process = None
-        if self._player_candidate_index < len(self._player_candidates):
+        code = session.process.returncode
+        session.process = None
+        if session.candidate_index < len(session.candidates):
             self.append_log(f"CDN 候选启动失败（退出码={code}），自动切换下一条")
-        self._start_next_player_candidate(generation)
+        self._start_next_player_candidate(session)
 
-    def _stop_player(self) -> None:
-        self._player_generation += 1
-        self._player_candidates = []
-        self._player_candidate_index = 0
-        self._set_playing_follower(-1)
-        self._player_ipc = ""
-        process = self._player_process
-        self._player_process = None
+    def _remove_session(self, follower_index: int, message: str = "") -> None:
+        session = self._players.pop(follower_index, None)
+        if session is None:
+            return
+        session.process = None
+        if message:
+            self.append_log(message)
+        self.playingFollowersChanged.emit()
+
+    def _stop_session(self, follower_index: int) -> None:
+        session = self._players.get(follower_index)
+        if session is None:
+            return
+        process = session.process
+        self._remove_session(follower_index)
+        name = self._follower_name(follower_index)
+        suffix = f"（{name}）" if name else ""
         if process is None or process.poll() is not None:
             return
         try:
@@ -981,16 +1021,41 @@ class QuickController(QObject):
         # 等待退出并逐级升级到 kill，避免留下句柄或孤儿 mpv 进程。
         try:
             process.wait(timeout=2.0)
-            self.append_log("已停止当前 mpv")
+            self.append_log(f"已停止 mpv{suffix}")
             return
         except subprocess.TimeoutExpired:
             pass
         try:
             process.kill()
             process.wait(timeout=1.0)
-            self.append_log("已强制结束当前 mpv")
+            self.append_log(f"已强制结束 mpv{suffix}")
         except (OSError, subprocess.TimeoutExpired):
-            self.append_log("mpv 进程未能立即退出，可能仍占用播放文件")
+            self.append_log(f"mpv 进程未能立即退出{suffix}，可能仍占用播放文件")
+
+    def _stop_player(self) -> None:
+        """停止全部 mpv 会话（退出程序、更新 mpv/ffmpeg 时使用）。"""
+        for follower_index in list(self._players):
+            self._stop_session(follower_index)
+
+    def _stop_selected_player(self) -> None:
+        if self._selected_follower < 0:
+            self.append_log("请先选择一个关注项")
+            return
+        if self._selected_follower not in self._players:
+            names = [name for name in (self._follower_name(idx) for idx in self._players) if name]
+            hint = f"正在播放：{'、'.join(names)}" if names else "当前没有正在播放的直播间"
+            self.append_log(f"选中的直播间未在播放；{hint}")
+            return
+        self._stop_session(self._selected_follower)
+
+    def _reap_exited_players(self) -> None:
+        """定期回收已退出的 mpv 会话，释放播放名额。"""
+        for follower_index in list(self._players):
+            process = self._players[follower_index].process
+            if process is None or process.poll() is None:
+                continue
+            name = self._follower_name(follower_index)
+            self._remove_session(follower_index, f"mpv 已退出（{name}）" if name else "mpv 已退出")
 
     def _copy_selected(self) -> None:
         row = self._selected_row()
@@ -1020,12 +1085,22 @@ class QuickController(QObject):
 
     # ---- mpv 控制（经 --input-ipc-server 命名管道） ----------------------
 
+    def _control_session(self) -> _PlayerSession | None:
+        """播放控制的目标：选中的直播间优先，否则最近启动的会话。"""
+        session = self._players.get(self._selected_follower)
+        if session is not None and session.process is not None and session.process.poll() is None:
+            return session
+        for candidate in reversed(self._players.values()):
+            if candidate.process is not None and candidate.process.poll() is None:
+                return candidate
+        return None
+
     def _send_mpv(self, *command: str) -> None:
-        process = self._player_process
-        if process is None or process.poll() is not None:
+        session = self._control_session()
+        if session is None:
             self.append_log("mpv 当前没有正在播放")
             return
-        if not mpv_command(self._player_ipc, *command):
+        if not mpv_command(session.ipc, *command):
             self.append_log("无法连接 mpv 控制通道")
 
     @Slot()

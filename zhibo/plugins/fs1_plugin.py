@@ -33,7 +33,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent
 ROOMS_CONFIG = fs_config_path()
 DEFAULT_ROOMS_CONFIG = ROOMS_CONFIG
 DEFAULT_SITE_URL = "https://www.fszb130.com"
-DEFAULT_API_URL = "https://apc.xzood6veuybwkr.com/v1/room"
+DEFAULT_API_URL = "https://apc.fqwm8ntrpaxjvd.com/v1/room"
 DEFAULT_API_PATH = "/v1/room"
 DEFAULT_PLAY_API_URL = "https://openim-php-api.q2n1w3g2y5v0w4l1.cc/v230/play/url"
 DEFAULT_PLAY_PATH = "/v230/play/url"
@@ -42,7 +42,10 @@ QUALITY_PRIORITY = ["lgzm", "gqzm", "bqzm"]
 # accepted family narrow because the browser export and authorization headers
 # are only safe to use with an owned FS1 site origin.
 FS_DOMAIN_RE = re.compile(r"(?:[a-z0-9-]+\.)*(?:fszb|fs)\d+\.com$", re.I)
-API_HOSTS = frozenset({"apc.xzood6veuybwkr.com"})
+# 房间 API 与播放 API 一样发布在轮换的随机域名命名空间里（如
+# apc.xzood6veuybwkr.com → apc.fqwm8ntrpaxjvd.com），写死单个主机每次
+# 上游轮换都会失效；按命名空间正则放行，授权头仍然只会发往 FS1 自有域。
+API_HOST_RE = re.compile(r"apc\.[a-z0-9]{8,64}\.com$", re.I)
 # FS pages currently host their public bundles on this fixed CDN. It is used
 # only for unauthenticated script discovery; authorization headers are never
 # sent to it.
@@ -156,7 +159,7 @@ def is_trusted_api_url(value: str) -> bool:
     parsed = _parse_https_url(value)
     return bool(
         parsed
-        and (parsed.hostname or "").casefold() in API_HOSTS
+        and API_HOST_RE.fullmatch((parsed.hostname or "").casefold())
         and parsed.path == DEFAULT_API_PATH
         and not parsed.params
         and not parsed.query
@@ -646,7 +649,7 @@ def _export_is_room_map(source: dict[str, Any]) -> bool:
         parsed = _parse_https_url(_export_scalar(value))
         if (
             parsed
-            and (parsed.hostname or "").casefold() in API_HOSTS
+            and API_HOST_RE.fullmatch((parsed.hostname or "").casefold())
             and parsed.path.rstrip("/") == DEFAULT_API_PATH
         ):
             return True
@@ -656,7 +659,7 @@ def _export_is_room_map(source: dict[str, Any]) -> bool:
 def _export_api_base(candidate: str) -> str:
     """Normalize a room API URL and enforce the fixed trusted endpoint."""
     parsed = _parse_https_url(candidate)
-    if not parsed or (parsed.hostname or "").casefold() not in API_HOSTS:
+    if not parsed or not API_HOST_RE.fullmatch((parsed.hostname or "").casefold()):
         return ""
     path = parsed.path.rstrip("/") or DEFAULT_API_PATH
     if path == "/":

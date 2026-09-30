@@ -35,8 +35,12 @@ class Fs1Test {
     @Test
     fun `trusted url validation mirrors desktop whitelist`() {
         assertTrue(Fs1Trust.isTrustedApi("https://apc.xzood6veuybwkr.com/v1/room"))
+        // 房间 API 域名随站点轮换（xzood6veuybwkr → fqwm8ntrpaxjvd），命名空间正则放行
+        assertTrue(Fs1Trust.isTrustedApi("https://apc.fqwm8ntrpaxjvd.com/v1/room"))
         assertTrue(!Fs1Trust.isTrustedApi("http://apc.xzood6veuybwkr.com/v1/room"))
         assertTrue(!Fs1Trust.isTrustedApi("https://evil.com/v1/room"))
+        assertTrue(!Fs1Trust.isTrustedApi("https://apc.attacker.net/v1/room"))
+        assertTrue(!Fs1Trust.isTrustedApi("https://apc.ab.com/v1/room"))
         assertTrue(!Fs1Trust.isTrustedApi("https://apc.xzood6veuybwkr.com/v1/room?x=1"))
         assertTrue(Fs1Trust.isTrustedPlayApi("https://openim-php-api.q2n1w3g2y5v0w4l1.cc/v230/play/url"))
         assertTrue(!Fs1Trust.isTrustedPlayApi("https://openim-php-api.abc.cc/other"))
@@ -51,7 +55,7 @@ class Fs1Test {
                 apiUrl = "https://evil.com/v1/room",
             ).toJson(),
         )!!
-        assertEquals(Fs1Trust.DEFAULT_API_URL, "https://apc.xzood6veuybwkr.com/v1/room")
+        assertEquals(Fs1Trust.DEFAULT_API_URL, "https://apc.fqwm8ntrpaxjvd.com/v1/room")
         assertFalse(Fs1Trust.isTrustedApi(auth.apiUrl))
     }
 

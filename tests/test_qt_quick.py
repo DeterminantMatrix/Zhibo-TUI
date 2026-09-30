@@ -11,7 +11,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from qt_quick.controller import QuickController
+from qt_quick.controller import QuickController, _PlayerSession
 from qt_quick import controller as quick_controller_module
 from qt_quick.model import HEADERS, StreamTableModel
 from qt_quick.worker import QuickMonitorThread
@@ -233,18 +233,23 @@ def test_player_ipc_commands_require_active_mpv(monkeypatch):
     controller.playerTogglePause()
     assert written == []
 
-    controller._player_ipc = r"\.\pipe\zhibo-mpv-test"
-    controller._player_process = subprocess.Popen  # 任意非 None 且 poll() 非 None 的对象不满足，用真桩
-
     class Live:
         def poll(self):
             return None
 
-    controller._player_process = Live()
+    controller._players[3] = _PlayerSession(follower=3, ipc=r"\.\pipe\zhibo-mpv-test", process=Live())
     controller.playerVolumeUp()
     assert written == ['{"command": ["add", "volume", "5"]}\n']
     controller.playerTogglePause()
     assert written[-1] == '{"command": ["cycle", "pause"]}\n'
+
+    # 播放控制优先作用于选中的直播间；选中项未播放时兜底到最近启动的会话。
+    written.clear()
+    controller.selectFollower(3)
+    assert controller._control_session() is controller._players[3]
+    controller._players[3].process = None
+    controller._players[4] = _PlayerSession(follower=4, ipc=r"\.\pipe\zhibo-mpv-test", process=Live())
+    assert controller._control_session() is controller._players[4]
 
 
 def test_quick_controller_tray_guard_blocks_hide_when_unavailable():
@@ -322,11 +327,11 @@ def test_quick_controller_stop_player_waits_then_kills():
             self._poll = 0
 
     graceful = _StubProcess()
-    controller._player_process = graceful
+    controller._players[1] = _PlayerSession(follower=1, process=graceful)
     controller._stop_player()
     assert graceful.terminated == 1
     assert graceful.killed == 0
-    assert controller._player_process is None
+    assert controller._players == {}
 
     stubborn = _StubProcess()
 
@@ -334,11 +339,11 @@ def test_quick_controller_stop_player_waits_then_kills():
         raise subprocess.TimeoutExpired(cmd="mpv", timeout=timeout)
 
     stubborn.wait = _never_exits
-    controller._player_process = stubborn
+    controller._players[2] = _PlayerSession(follower=2, process=stubborn)
     controller._stop_player()
     assert stubborn.terminated == 1
     assert stubborn.killed == 1
-    assert controller._player_process is None
+    assert controller._players == {}
 
 
 def test_quick_controller_sort_column_toggles_and_persists(tmp_path):
@@ -541,15 +546,16 @@ def test_quick_controller_retries_next_cdn_when_mpv_exits_immediately(monkeypatc
 
     monkeypatch.setattr(quick_controller_module, "play_url", fake_play_url)
     controller._stream_ready("play", {
+        "idx": 7,
         "url": "https://cdn-a.example/live.m3u8",
         "urls": [
             "https://cdn-a.example/live.m3u8",
             "https://cdn-b.example/live.m3u8",
         ],
     })
-    generation = controller._player_generation
-    controller._verify_player_candidate(generation)
-    controller._verify_player_candidate(generation)
+    session = controller._players[7]
+    controller._verify_player_candidate(session)
+    controller._verify_player_candidate(session)
 
     assert calls == [
         "https://cdn-a.example/live.m3u8",
@@ -558,6 +564,94 @@ def test_quick_controller_retries_next_cdn_when_mpv_exits_immediately(monkeypatc
     assert "自动切换下一条" in controller.logText
     assert "已启动 mpv 播放" in controller.logText
     controller._stop_player()
+    assert controller._players == {}
+
+
+def test_quick_controller_allows_up_to_three_concurrent_players(monkeypatch):
+    QApplication.instance() or QApplication([])
+    controller = QuickController(_Monitor())
+    started = []
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = 0
+            self.pid = 123
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    def fake_play_url(url, **kwargs):
+        started.append(url)
+        return FakeProcess()
+
+    monkeypatch.setattr(quick_controller_module, "play_url", fake_play_url)
+
+    def play(follower_index):
+        controller._stream_ready("play", {
+            "idx": follower_index,
+            "url": f"https://cdn/{follower_index}.m3u8",
+            "urls": [f"https://cdn/{follower_index}.m3u8"],
+        })
+
+    for follower_index in (1, 2, 3):
+        play(follower_index)
+    assert set(controller.playingFollowers) == {1, 2, 3}
+    assert len(started) == 3
+
+    # 第 4 个直播间被拒绝并给出提示。
+    play(4)
+    assert 4 not in controller._players
+    assert "最多同时播放 3 个" in controller.logText
+
+    # 同一直播间再次播放视为重启，不占新名额。
+    play(1)
+    assert set(controller.playingFollowers) == {1, 2, 3}
+    assert len(started) == 4
+
+    # X 停止选中的直播间；释放名额后可以继续播放新的直播间。
+    controller.selectFollower(2)
+    controller.action("stop")
+    assert 2 not in controller.playingFollowers
+    play(4)
+    assert set(controller.playingFollowers) == {1, 3, 4}
+
+    # 退出程序停止全部播放。
+    controller.shutdown()
+    assert controller.playingFollowers == []
+    assert controller._players == {}
+
+
+def test_quick_controller_reaps_exited_mpv_sessions():
+    QApplication.instance() or QApplication([])
+    controller = QuickController(_Monitor())
+
+    class DeadProcess:
+        def __init__(self):
+            self.returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    controller._players[5] = _PlayerSession(follower=5, process=DeadProcess())
+    controller._players[6] = _PlayerSession(follower=6, candidates=["https://cdn/6.m3u8"])
+    controller._reap_exited_players()
+
+    assert 5 not in controller._players
+    # 候选启动中的会话（process 为空）不会被误回收。
+    assert 6 in controller._players
+    assert "mpv 已退出" in controller.logText
 
 
 def test_quick_qml_keeps_all_previous_function_keys_and_shortcuts():

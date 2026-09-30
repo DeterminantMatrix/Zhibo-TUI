@@ -650,9 +650,9 @@ ApplicationWindow {
                             color: followerIndex === controller.selectedFollower
                                    ? root.theme.rowSelected
                                    : row % 2 ? root.theme.rowAlternate : root.bg1
-                            border.color: followerIndex === controller.playingFollower ? root.accent
+                            border.color: controller.playingFollowers.includes(followerIndex) ? root.accent
                                          : followerIndex === controller.selectedFollower ? root.theme.tagBorder : root.theme.rowBorder
-                            border.width: followerIndex === controller.playingFollower ? 2 : 1
+                            border.width: controller.playingFollowers.includes(followerIndex) ? 2 : 1
                             // 保存成功后模型角色变化会重新同步画质下拉框的显示。
                             onConfiguredQualityChanged: if (column === 5) qualitySelector.currentIndex = qualitySelector.configuredIndex()
                             onQualityChoicesChanged: if (column === 5) qualitySelector.currentIndex = qualitySelector.configuredIndex()
@@ -663,8 +663,8 @@ ApplicationWindow {
                                 anchors.leftMargin: 9
                                 anchors.rightMargin: 5
                                 // 正在播放的主播行：状态列加 ▶ 前缀。
-                                text: (cell.followerIndex === controller.playingFollower && cell.column === 0 ? "▶" : "") + cell.display
-                                color: cell.followerIndex === controller.playingFollower ? root.accent : cell.foreground
+                                text: (controller.playingFollowers.includes(followerIndex) && cell.column === 0 ? "▶" : "") + cell.display
+                                color: controller.playingFollowers.includes(followerIndex) ? root.accent : cell.foreground
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 elide: Text.ElideRight
@@ -931,7 +931,7 @@ ApplicationWindow {
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 Text { text: controller.statusText; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true }
-                Text { text: "↑↓ 选择   Enter 播放   X 停止"; color: root.theme.footerText; font.pixelSize: 11 }
+                Text { text: "↑↓ 选择   Enter 播放   X 停止选中"; color: root.theme.footerText; font.pixelSize: 11 }
             }
         }
     }
@@ -994,7 +994,7 @@ ApplicationWindow {
         }
         MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: root.line } }
         TuiMenuItem { text: "播放直播  [Enter]"; onTriggered: controller.action("play") }
-        TuiMenuItem { text: "停止播放  [X]"; onTriggered: controller.action("stop") }
+        TuiMenuItem { text: "停止选中直播  [X]"; onTriggered: controller.action("stop") }
         TuiMenuItem { text: "复制直播流地址  [C]"; onTriggered: controller.action("copy_stream") }
         TuiMenuItem { text: "复制直播间摘要  [Ctrl+Shift+C]"; onTriggered: controller.action("copy_selected") }
         MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: root.line } }

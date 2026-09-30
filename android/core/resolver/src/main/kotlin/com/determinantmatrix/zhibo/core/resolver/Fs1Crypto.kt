@@ -13,12 +13,15 @@ object Fs1Trust {
     private val FS_DOMAIN = Regex("(?:[a-z0-9-]+\\.)*(?:fszb|fs)\\d+\\.com", RegexOption.IGNORE_CASE)
     private val PLAY_HOST = Regex("openim-php-api\\.[a-z0-9]{8,64}\\.cc", RegexOption.IGNORE_CASE)
 
-    const val API_HOST = "apc.xzood6veuybwkr.com"
+    // 房间 API 域名随站点轮换（xzood6veuybwkr → fqwm8ntrpaxjvd），按命名空间
+    // 正则放行，与桌面 fs1_plugin.py 的 API_HOST_RE 保持一致。
     const val API_PATH = "/v1/room"
     const val PLAY_PATH = "/v230/play/url"
     const val DEFAULT_SITE_URL = "https://www.fszb130.com"
-    const val DEFAULT_API_URL = "https://apc.xzood6veuybwkr.com/v1/room"
+    const val DEFAULT_API_URL = "https://apc.fqwm8ntrpaxjvd.com/v1/room"
     const val DEFAULT_PLAY_API_URL = "https://openim-php-api.q2n1w3g2y5v0w4l1.cc/v230/play/url"
+
+    private val API_HOST = Regex("apc\\.[a-z0-9]{8,64}\\.com", RegexOption.IGNORE_CASE)
 
     private fun parse(url: String): URI? = runCatching {
         val uri = URI(url.trim())
@@ -42,7 +45,7 @@ object Fs1Trust {
     }
 
     fun isTrustedApi(url: String): Boolean =
-        isTrusted(url, { it == API_HOST }, API_PATH)
+        isTrusted(url, { API_HOST.matches(it) }, API_PATH)
 
     fun isTrustedPlayApi(url: String): Boolean =
         isTrusted(url, { PLAY_HOST.matches(it) }, PLAY_PATH)
