@@ -3,12 +3,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
-import yaml
 
-import config
-import importer
-from importer import build_follower_from_url, detect_platform, fallback_name
-from models import Follower
+from zhibo import config
+from zhibo import importer
+from zhibo.importer import build_follower_from_url, detect_platform, fallback_name
+from zhibo.models import Follower
 
 
 def test_detect_platform_known_urls():
@@ -77,36 +76,6 @@ def test_build_follower_from_fs_url(monkeypatch):
     assert follower.tags == ["LOL"]
 
 
-def test_append_follower_writes_followers_yaml():
-    yaml_content = """
-poll_interval: 30
-followers: []
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
-        f.write(yaml_content)
-    fpath = f.name
-    cm = config.ConfigManager(fpath)
-    try:
-        cm.load_config()
-    except SystemExit:
-        pass
-
-    try:
-        cm.append_follower(
-            Follower(
-                name="example",
-                plugin="streamlink",
-                platform="twitch",
-                url="https://www.twitch.tv/example",
-            )
-        )
-        data = yaml.safe_load(Path(fpath).read_text(encoding="utf-8"))
-        assert data["followers"][0]["name"] == "example"
-        assert data["followers"][0]["platform"] == "twitch"
-    finally:
-        Path(fpath).unlink(missing_ok=True)
-
-
 def test_append_follower_writes_followers_csv():
     csv_content = "enabled,name,tags,plugin,fallback_plugins,platform,url,quality,sport_id\n"
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
@@ -163,3 +132,102 @@ def test_append_follower_rejects_duplicate_room():
         assert "duplicate" not in data
     finally:
         Path(fpath).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtube.com.evil.invalid/live",
+        "https://notyoutube.com/live",
+        "https://live.bilibili.com.evil.invalid/7777",
+        "https://fszb148.com.evil.invalid/broadcast/details?room_id=1",
+    ],
+)
+def test_detect_platform_requires_a_hostname_boundary(url):
+    with pytest.raises(ValueError):
+        detect_platform(url)
+
+
+def test_detect_platform_accepts_real_subdomains_but_not_lookalikes():
+    assert detect_platform("https://gaming.youtube.com/channel/example") == (
+        "youtube",
+        "yt_dlp",
+        ["streamget", "streamlink"],
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///C:/Windows/System32/calc.exe",
+        "ftp://www.twitch.tv/example",
+        "javascript:alert(1)",
+        "data:text/html,test",
+        "https://www.twitch.tv:invalid/example",
+    ],
+)
+def test_detect_platform_rejects_non_http_urls_and_malformed_hosts(url):
+    with pytest.raises(ValueError):
+        detect_platform(url)
+
+
+def test_build_follower_rejects_non_http_url_before_plugin_lookup(monkeypatch):
+    monkeypatch.setattr(importer, "get_plugin", lambda name: pytest.fail("plugin lookup should not occur"))
+
+    with pytest.raises(ValueError):
+        asyncio.run(build_follower_from_url("file:///C:/Windows/System32/calc.exe"))
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.twitch.tv/example?token=must-not-reach-plugin",
+        "https://www.twitch.tv/example?auth=must-not-reach-plugin",
+        "https://www.twitch.tv/example?sign=must-not-reach-plugin",
+    ],
+)
+def test_build_follower_rejects_credential_bearing_url_before_plugin_lookup(monkeypatch, url):
+    monkeypatch.setattr(importer, "get_plugin", lambda name: pytest.fail("plugin lookup should not occur"))
+
+    with pytest.raises(ValueError, match="不能包含"):
+        asyncio.run(build_follower_from_url(url))
+
+
+def test_detect_platform_recognises_haixing_mirrors():
+    assert detect_platform("https://hxty4.com/live/1733") == ("haixing", "haixing", [])
+    assert detect_platform("https://www.hxty5.com/live/42?from=home") == ("haixing", "haixing", [])
+    assert detect_platform("https://www.haixing4.com/live/7") == ("haixing", "haixing", [])
+
+
+def test_build_follower_from_haixing_url_stores_room_id(monkeypatch):
+    monkeypatch.setattr(importer, "get_plugin", lambda name: None)
+
+    follower = asyncio.run(build_follower_from_url("https://www.hxty5.com/live/1733", "体育"))
+
+    assert follower.name == "海星房间 1733"
+    assert follower.plugin == "haixing"
+    assert follower.platform == "haixing"
+    assert follower.url == "1733"
+    assert follower.fallback_plugins == []
+
+
+def test_build_follower_from_haixing_url_uses_room_title(monkeypatch):
+    class FakePlugin:
+        name = "haixing"
+
+        async def check_live(self, url, **kwargs):
+            from zhibo.plugins.base import LiveInfo
+
+            return LiveInfo(
+                is_live=True,
+                anchor_name="鬼哥侃球",
+                title="非洲杯 布隆迪 VS 阿尔及利亚",
+                stream_url="https://pull.example/x.m3u8",
+            )
+
+    monkeypatch.setattr(importer, "get_plugin", lambda name: FakePlugin())
+
+    follower = asyncio.run(build_follower_from_url("https://hxty4.com/live/1733"))
+
+    assert follower.name == "非洲杯 布隆迪 VS 阿尔及利亚"
+    assert follower.url == "1733"

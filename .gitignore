@@ -6,12 +6,17 @@ __pycache__/
 .codegraph/
 .reasonix/
 
+# PyInstaller 构建产物（spec 文件本身需要提交）
+build/
+dist/
+
 .vscode/
 .idea/
 
 *.log
 *.tmp
 *.bak
+.*.lock
 
 # Local runtime data and credentials. Keep redacted *.example templates in Git.
 .env
