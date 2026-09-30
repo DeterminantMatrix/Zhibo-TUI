@@ -14,11 +14,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from zhibo import app_root, is_frozen, resource_root
 from zhibo.plugins import discover_plugins
 from zhibo.single_instance import COMMAND_SHOW, SingleInstance, notify_existing_instance
 from zhibo.single_instance import notify_existing_instance as _notify
 
-INSTANCE_KEY = f"{str(PROJECT_ROOT).casefold()}::tui"
+# 单实例键必须跨启动稳定：打包后 __file__ 位于每次启动都不同的
+# 临时解包目录（_MEIPASS），改锚定 exe 所在目录。
+_RUNTIME_ROOT = app_root() if is_frozen() else PROJECT_ROOT
+INSTANCE_KEY = f"{str(_RUNTIME_ROOT).casefold()}::tui"
+
+# 托盘图标是只读资源：打包后随 spec 的 datas 进入解包目录。
+_TRAY_ICON = resource_root() / "tui" / "assets" / "tray.ico"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         # 托盘任何环节失败都只降级为"无托盘"，绝不能挡住监控主程序。
         try:
             tray = TrayController(
-                icon_path=PROJECT_ROOT / "tui" / "assets" / "tray.ico",
+                icon_path=_TRAY_ICON,
                 tooltip="直播监控工具 · TUI",
                 on_show=show_console,
                 on_hide=hide_console,
