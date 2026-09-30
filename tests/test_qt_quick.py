@@ -1656,3 +1656,46 @@ def test_quick_controller_polling_active_tracks_poll_state():
     assert "检测中" in controller.statusText
     controller.set_polling(False, 0)
     assert controller.pollingActive is False
+
+
+def test_quick_worker_haixing_update_reloads_pool_and_clears_circuit(tmp_path, monkeypatch):
+    path = tmp_path / "followers.csv"
+    manager = ConfigManager(path)
+    manager.write_followers_csv(
+        [Follower(name="海星", plugin="haixing", platform="haixing", url="1823")]
+    )
+    worker = QuickMonitorThread(str(path))
+    worker._service = MonitorService(str(path))
+    health = worker._service._record_platform_connectivity_failure(
+        "haixing", "海星体育全部镜像域名失败: hxty4.com: timeout", source=0
+    )
+    assert health.state == "degraded"
+
+    from zhibo.plugins.haixing_plugin import HaixingPlugin, update_domains_from_text
+
+    applied: dict[str, str] = {}
+
+    def fake_update(raw, config_path=None):
+        nonlocal applied
+        applied = update_domains_from_text(raw, tmp_path / "haixing" / "domains.yaml")
+        return applied
+
+    import zhibo.plugins.haixing_plugin as haixing_module
+
+    monkeypatch.setattr(haixing_module, "update_domains_from_text", fake_update)
+    monkeypatch.setattr(HaixingPlugin, "reload_config", lambda self: None)
+
+    asyncio.run(worker._update_haixing("hxty5.com"))
+
+    assert applied == {"domains": "hxty5.com"}
+    assert health.state == "healthy"
+
+
+def test_quick_worker_haixing_is_an_allowed_update_target():
+    # allowed 集合缺 haixing 时，更新中心条目会显示但执行被拒。
+    import inspect
+
+    from qt_quick import worker as worker_module
+
+    source = inspect.getsource(worker_module.QuickMonitorThread._run_update)
+    assert '"haixing"' in source

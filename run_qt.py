@@ -7,6 +7,6 @@ import multiprocessing
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    from tui.__main__ import main
+    from qt_quick.main import main
 
     raise SystemExit(main())

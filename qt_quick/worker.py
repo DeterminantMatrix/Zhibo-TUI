@@ -880,7 +880,7 @@ class QuickMonitorThread:
 
     async def _run_update(self, target: str, content: str) -> None:
         try:
-            allowed = {"streamlink", "streamget", "yt-dlp", "mpv", "ffmpeg", "uosc", "fs1", "bilibili_cookie"}
+            allowed = {"streamlink", "streamget", "yt-dlp", "mpv", "ffmpeg", "uosc", "fs1", "haixing", "bilibili_cookie"}
             if target not in allowed:
                 raise ValueError("更新目标无效")
             self.bridge.dialogData.emit("update", {"stage": "progress", "progress": 5, "progressText": "正在准备更新…"})
@@ -895,6 +895,11 @@ class QuickMonitorThread:
                 version = "内置配置适配器"
                 await self._record_update(target, version)
                 message = "FS1 配置已更新并重新载入"
+            elif target == "haixing":
+                await self._update_haixing(content)
+                version = "内置域名池适配器"
+                await self._record_update(target, version)
+                message = "海星体育镜像域名池已更新并重新载入"
             elif target == "uosc":
                 from zhibo.mpv_ui import check_uosc_update
 
@@ -1094,6 +1099,23 @@ class QuickMonitorThread:
         for key in sorted(applied):
             value = "***" if key in {"token", "authorization", "cookie", "imei", "dun_imei"} else applied[key]
             self.bridge.log.emit(f"FS1 {key}: {redact_sensitive_text(value)}")
+
+    async def _update_haixing(self, content: str) -> None:
+        from zhibo.plugins import get_plugin
+        from zhibo.plugins.haixing_plugin import update_domains_from_text
+
+        if not content.strip():
+            raise ValueError("请粘贴海星体育镜像域名（如 hxty5.com），可一行多个")
+        self.bridge.progress.emit("update", 25.0, "正在解析并更新海星体育域名池…")
+        applied = await asyncio.to_thread(update_domains_from_text, content)
+        plugin = get_plugin("haixing")
+        if plugin is not None and callable(getattr(plugin, "reload_config", None)):
+            plugin.reload_config()
+        service = self._service_or_error()
+        service.reset_platform_health("haixing")
+        self._emit_snapshot()
+        for key in sorted(applied):
+            self.bridge.log.emit(f"海星体育 {key}: {redact_sensitive_text(applied[key])}")
 
     async def _update_package(self, package: str) -> None:
         if getattr(sys, "frozen", False):

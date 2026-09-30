@@ -27,7 +27,8 @@
 - 原生系统托盘、最小化隐藏、通知开关和手动刷新；
 - 关注项编辑、监控设置和直播间导入，均采用预览、确认和原子写入；
 - 打开网页、复制流、复制选中、mpv 播放和停止播放；
-- streamlink、streamget、yt-dlp、FS1 与 B站 Cookie 更新；
+- streamlink、streamget、yt-dlp、FS1、海星体育域名池与 B站 Cookie 更新；
+- 海星体育多镜像域名池：失败自动降级到下一镜像，域名轮换后粘贴新镜像即可恢复；
 - YouTube 格式读取、画质选择、下载进度；
 - Twitch、YouTube、Kick、CHZZK、TikTok 和 TwitCasting 独立代理设置。
 

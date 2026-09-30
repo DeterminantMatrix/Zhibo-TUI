@@ -603,10 +603,12 @@ Item {
             }
             Text {
                 visible: !updatePane.progressVisible && updatePane.selectedItem
-                         && (updatePane.selectedItem.value === "fs1" || updatePane.selectedItem.value === "bilibili_cookie")
+                         && (updatePane.selectedItem.value === "fs1" || updatePane.selectedItem.value === "haixing" || updatePane.selectedItem.value === "bilibili_cookie")
                 text: updatePane.selectedItem && updatePane.selectedItem.value === "fs1"
                       ? "粘贴 FS /v1/room curl，或 Tampermonkey 导出的 zhibo.fs1-auth JSON。"
-                      : "粘贴本人登录 B站后导出的 Netscape cookies.txt；请勿粘贴请求头或他人凭据。"
+                      : updatePane.selectedItem && updatePane.selectedItem.value === "haixing"
+                        ? "粘贴海星体育镜像域名（如 hxty5.com），可一行多个；会替换现有域名池。"
+                        : "粘贴本人登录 B站后导出的 Netscape cookies.txt；请勿粘贴请求头或他人凭据。"
                 color: overlay.textMuted
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
@@ -616,8 +618,12 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 88
                 visible: !updatePane.progressVisible && updatePane.selectedItem
-                         && (updatePane.selectedItem.value === "fs1" || updatePane.selectedItem.value === "bilibili_cookie")
-                placeholderText: updatePane.selectedItem && updatePane.selectedItem.value === "fs1" ? "curl 或 FS1 授权 JSON …" : "# Netscape HTTP Cookie File…"
+                         && (updatePane.selectedItem.value === "fs1" || updatePane.selectedItem.value === "haixing" || updatePane.selectedItem.value === "bilibili_cookie")
+                placeholderText: updatePane.selectedItem && updatePane.selectedItem.value === "fs1"
+                      ? "curl 或 FS1 授权 JSON …"
+                      : updatePane.selectedItem && updatePane.selectedItem.value === "haixing"
+                        ? "hxty5.com https://www.haixing4.com …"
+                        : "# Netscape HTTP Cookie File…"
                 color: overlay.textMain
                 selectByMouse: true
                 wrapMode: TextEdit.WrapAnywhere

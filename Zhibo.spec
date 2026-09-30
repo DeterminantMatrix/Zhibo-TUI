@@ -1,28 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包配置：TUI 版，单文件夹模式（onedir）。
+"""PyInstaller 打包配置：Qt Quick 版，单文件夹模式（onedir）。
 
 选 onedir 而非单文件：本程序用多进程隔离子进程做插件检测，
 单文件模式下每个子进程都要重新解包（每次数秒），onedir 则共享
 同一份文件；启动也更快、更不易被杀毒软件误报。
-
-相比旧 Qt 版 spec：无 PySide6/QML（体积大头），console=True 保留
-真实终端（Textual 渲染需要），数据锚定 exe 所在目录（app_root）。
 """
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import copy_metadata
 
 datas = [
-    # 托盘图标按包内相对路径进入解包目录，tui/__main__ 从 resource_root 读取。
-    ("tui/assets", "tui/assets"),
+    # QML 界面与图标必须按 qt_quick 包内的相对路径进入解包目录，
+    # qt_quick/main.py 会从 _MEIPASS/qt_quick/... 读取它们。
+    ("qt_quick/qml", "qt_quick/qml"),
+    ("qt_quick/assets", "qt_quick/assets"),
 ]
 # 缺 dist-info 会让打包版更新中心把全部组件误报"未安装"。
-for _meta in ("streamlink", "streamget", "yt-dlp", "httpx", "packaging", "textual"):
+for _meta in ("streamlink", "streamget", "yt-dlp", "httpx", "packaging"):
     datas += copy_metadata(_meta)
 
-# Textual 的控件模块经 __getattr__ 惰性导入，静态分析看不见，必须整包收集。
-_textual_submodules = collect_submodules("textual")
-
 a = Analysis(
-    ["run_tui.py"],
+    ["run_qt.py"],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -33,23 +29,40 @@ a = Analysis(
         "zhibo.plugins.streamget_plugin",
         "zhibo.plugins.streamlink_plugin",
         "zhibo.plugins.yt_dlp_plugin",
-        *_textual_submodules,
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         "tkinter", "pytest", "pytest_asyncio",
-        # TUI 版不携带 Qt；qt_quick 是本地包，防止被意外扫入。
-        "PySide6", "qt_quick",
+        # 已退役 TUI 的专属依赖，防止从环境里被意外扫入。
+        "textual", "pystray", "PIL",
     ],
     noarchive=False,
     optimize=0,
 )
 
-# streamlink 拖进来的 pycountry 自带全部语言的 gettext 翻译（约 20MB）；
-# 国家/语言数据库仍在（缺翻译时回落英文名），只剪 locales 目录。
-a.datas = [d for d in a.datas if not d[0].replace("\\", "/").startswith("pycountry/locales")]
+# ---------------------------------------------------------------------------
+# PyInstaller 的 PySide6 QML 扫描会把 WebEngine（Chromium，196MB）、Quick3D、
+# 软件渲染回退等本程序用不到的 Qt 成分一并拖进来；模块 excludes 拦不住
+# 二进制级收集，只能在 Analysis 之后直接过滤。
+# 注意：opengl32sw 被剪掉后，无可用 GPU 的机器上可能无法渲染。
+_BIN_EXCLUDE_SUBSTRINGS = (
+    "Qt6WebEngine", "Qt6Pdf", "Qt6Charts", "Qt6DataVisualization",
+    "Qt6Quick3D", "Qt63D", "Qt6RemoteObjects", "Qt6NetworkAuth",
+    "Qt6TextToSpeech", "Qt6SerialPort", "Qt6Bluetooth", "Qt6Nfc",
+    "opengl32sw", "d3dcompiler",
+)
+a.binaries = [b for b in a.binaries if not any(x in b[0] for x in _BIN_EXCLUDE_SUBSTRINGS)]
+a.datas = [
+    d for d in a.datas
+    if not d[0].replace("\\", "/").startswith("pycountry/locales")
+    and "translations" not in d[0]
+    and not any(part in d[0] for part in ("QtWebEngine", "QtQuick3D", "Qt3D", "QtCharts"))
+]
+a.binaries += [
+    # 解压/网络等可能被 QML 间接引用的二进制若被误剪，可在此加回。
+]
 
 pyz = PYZ(a.pure)
 
@@ -63,13 +76,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon="tui/assets/tray.ico",
+    icon="qt_quick/assets/tray.ico",
 )
 
 coll = COLLECT(
