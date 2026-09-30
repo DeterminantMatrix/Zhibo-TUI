@@ -258,3 +258,75 @@ def test_sweep_install_leftovers_recovers_missing_target_from_backup(monkeypatch
     assert (tmp_path / "mpv" / "mpv.exe").read_bytes() == b"old"
     assert not backup.exists()
     assert cleaned
+
+
+def test_urlopen_with_retry_recovers_from_transient_stall(monkeypatch):
+    import urllib.error
+
+    from zhibo.tool_runtime import urlopen_with_retry
+
+    calls = {"count": 0}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def flaky_urlopen(request, timeout=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise urllib.error.URLError("<urlopen error _ssl.c:993: The handshake operation timed out>")
+        return FakeResponse()
+
+    monkeypatch.setattr("zhibo.tool_runtime.urllib.request.urlopen", flaky_urlopen)
+    monkeypatch.setattr("zhibo.tool_runtime.time.sleep", lambda seconds: None)
+
+    response = urlopen_with_retry("request", timeout=12)
+    assert response is not None
+    assert calls["count"] == 2
+
+
+def test_urlopen_with_retry_does_not_retry_http_errors(monkeypatch):
+    import urllib.error
+
+    from zhibo.tool_runtime import urlopen_with_retry
+
+    calls = {"count": 0}
+
+    def http_error_urlopen(request, timeout=None):
+        calls["count"] += 1
+        raise urllib.error.HTTPError(
+            "https://pypi.org", 404, "Not Found", hdrs=None, fp=None
+        )
+
+    monkeypatch.setattr("zhibo.tool_runtime.urllib.request.urlopen", http_error_urlopen)
+    monkeypatch.setattr("zhibo.tool_runtime.time.sleep", lambda seconds: None)
+
+    import pytest
+
+    with pytest.raises(urllib.error.HTTPError):
+        urlopen_with_retry("request", timeout=12)
+    assert calls["count"] == 1
+
+
+def test_urlopen_with_retry_raises_after_exhausting_attempts(monkeypatch):
+    import urllib.error
+
+    from zhibo.tool_runtime import urlopen_with_retry
+
+    calls = {"count": 0}
+
+    def always_timeout(request, timeout=None):
+        calls["count"] += 1
+        raise TimeoutError("_ssl.c:993: The handshake operation timed out")
+
+    monkeypatch.setattr("zhibo.tool_runtime.urllib.request.urlopen", always_timeout)
+    monkeypatch.setattr("zhibo.tool_runtime.time.sleep", lambda seconds: None)
+
+    import pytest
+
+    with pytest.raises(TimeoutError):
+        urlopen_with_retry("request", timeout=12)
+    assert calls["count"] == 2

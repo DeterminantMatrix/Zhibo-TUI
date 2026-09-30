@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,6 +24,27 @@ from zhibo.private_data import user_data_dir
 ProgressCallback = Callable[[float, str], None]
 MIB = 1024 * 1024
 USER_AGENT = "Zhibo-Updater/2"
+
+
+def urlopen_with_retry(request, *, timeout, attempts=2, pause=1.5):
+    """``urlopen`` with one retry for transient network stalls.
+
+    版本检查打的是 PyPI/GitHub 远端：TLS 握手卡顿或本地代理半开会让
+    单发请求直接超时，更新中心整行标红。对网络类错误重试一次即可消除
+    绝大多数瞬时抖动；HTTP 4xx/5xx 是确定性答复，不重试。
+    """
+    last: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        if attempt:
+            time.sleep(pause)
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            last = exc
+    assert last is not None
+    raise last
 
 TOOL_RELEASES = {
     "mpv": {
@@ -131,7 +153,7 @@ def _request(url: str, *, method: str = "GET", accept: str = "*/*") -> urllib.re
 
 
 def _read_json(url: str) -> dict:
-    with urllib.request.urlopen(_request(url, accept="application/vnd.github+json"), timeout=20) as response:
+    with urlopen_with_retry(_request(url, accept="application/vnd.github+json"), timeout=20) as response:
         value = json.load(response)
     if not isinstance(value, dict):
         raise RuntimeError("远端返回了无效的发布信息")
@@ -139,12 +161,12 @@ def _read_json(url: str) -> dict:
 
 
 def _read_text(url: str) -> str:
-    with urllib.request.urlopen(_request(url), timeout=20) as response:
+    with urlopen_with_retry(_request(url), timeout=20) as response:
         return response.read().decode("utf-8", errors="replace").strip()
 
 
 def _remote_size(url: str) -> int:
-    with urllib.request.urlopen(_request(url, method="HEAD"), timeout=20) as response:
+    with urlopen_with_retry(_request(url, method="HEAD"), timeout=20) as response:
         return int(response.headers.get("Content-Length") or 0)
 
 

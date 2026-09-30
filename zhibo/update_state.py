@@ -96,6 +96,8 @@ class PackageUpdatePlan:
 
 def check_package_update(target: str, distribution: str | None = None) -> PackageUpdatePlan:
     """Read PyPI metadata and make a download-free package update decision."""
+    from zhibo.tool_runtime import urlopen_with_retry
+
     package = distribution or target
     installed = installed_version(package)
     url = f"https://pypi.org/pypi/{urllib.parse.quote(package, safe='')}/json"
@@ -104,7 +106,7 @@ def check_package_update(target: str, distribution: str | None = None) -> Packag
         headers={"Accept": "application/json", "User-Agent": "Zhibo-Updater/2"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=12) as response:
+        with urlopen_with_retry(request, timeout=12) as response:
             payload = json.load(response)
         remote = str((payload.get("info") or {}).get("version") or "").strip()
         if not remote:
@@ -115,13 +117,16 @@ def check_package_update(target: str, distribution: str | None = None) -> Packag
             status = "update" if Version(installed) < Version(remote) else "current"
         return PackageUpdatePlan(target, package, installed, remote, status)
     except (OSError, ValueError, TypeError, InvalidVersion, urllib.error.URLError) as exc:
+        text = str(exc)
+        if any(marker in text.casefold() for marker in ("timed out", "timeout", "handshake", "reset", "refused", "unreachable", "getaddrinfo")):
+            text += "（网络或代理瞬断，稍后重新检查即可）"
         return PackageUpdatePlan(
             target,
             package,
             installed,
             "无法确认",
             "unknown",
-            f"检查 PyPI 版本失败：{exc}",
+            f"检查 PyPI 版本失败：{text}",
         )
 
 
