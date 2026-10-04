@@ -43,6 +43,38 @@ def _invoke(root, method: str) -> None:
     QMetaObject.invokeMethod(root, method, Qt.ConnectionType.QueuedConnection)
 
 
+def _force_foreground_window(root) -> None:
+    """Windows 下把主窗口真正带到前台。
+
+    后台进程直接 ``SetForegroundWindow`` 会被系统拒绝（只有拿到前台
+    权限的进程才能切换前台，这就是"左键点托盘没反应、右键菜单里的
+    显示却好用"的原因——点菜单的交互给了进程前台权限）。标准解法是
+    先把本线程附加到当前前台窗口的输入线程，再恢复并置前。
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    hwnd = wintypes.HWND(int(root.winId()))
+    if not hwnd:
+        return
+    foreground = user32.GetForegroundWindow()
+    foreground_thread = user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+    current_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+    attached = False
+    if foreground_thread and foreground_thread != current_thread:
+        attached = bool(user32.AttachThreadInput(current_thread, foreground_thread, True))
+    try:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(current_thread, foreground_thread, False)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     smoke_test = "--smoke-test" in argv
@@ -103,7 +135,13 @@ def main(argv: list[str] | None = None) -> int:
         tray_menu.addSeparator()
         tray_menu.addAction(quit_action)
         tray.setContextMenu(tray_menu)
-        show_action.triggered.connect(lambda: _invoke(root, "restoreWindow"))
+        def _restore_window() -> None:
+            _invoke(root, "restoreWindow")
+            # 托盘左键点击时进程通常没有前台权限，QML 的
+            # showNormal+requestActivate 会被 Windows 拒绝，需要强切前台。
+            QTimer.singleShot(0, lambda: _force_foreground_window(root))
+
+        show_action.triggered.connect(_restore_window)
         hide_action.triggered.connect(lambda: _invoke(root, "hideWindow"))
 
         def shutdown() -> None:
@@ -117,11 +155,11 @@ def main(argv: list[str] | None = None) -> int:
         quit_action.triggered.connect(shutdown)
         controller.quitRequested.connect(shutdown)
         controller.hideRequested.connect(lambda: _invoke(root, "hideWindow"))
-        controller.showRequested.connect(lambda: _invoke(root, "restoreWindow"))
+        controller.showRequested.connect(_restore_window)
         tray.activated.connect(
             lambda reason: controller.notificationClicked()
             if reason == QSystemTrayIcon.ActivationReason.MessageClicked
-            else _invoke(root, "restoreWindow")
+            else _restore_window()
             if reason in {QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick}
             else None
         )
