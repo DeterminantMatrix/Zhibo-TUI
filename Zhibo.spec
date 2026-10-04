@@ -5,17 +5,31 @@
 单文件模式下每个子进程都要重新解包（每次数秒），onedir 则共享
 同一份文件；启动也更快、更不易被杀毒软件误报。
 """
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+
+import streamlink as _streamlink
+from pathlib import Path as _Path
 
 datas = [
     # QML 界面与图标必须按 qt_quick 包内的相对路径进入解包目录，
     # qt_quick/main.py 会从 _MEIPASS/qt_quick/... 读取它们。
     ("qt_quick/qml", "qt_quick/qml"),
     ("qt_quick/assets", "qt_quick/assets"),
+    # streamlink 靠文件系统扫描自己的 plugins 目录加载内置站点插件
+    # （twitch/YouTube/huya…）。PyInstaller 只把模块收进 PYZ，目录里没
+    # 有 .py 文件时 frozen 环境一个站点都解析不了——必须按数据整目录
+    # 打包（实测缺失时 Twitch 全员静默"未开播"）。
+    (str(_Path(_streamlink.__file__).resolve().parent / "plugins"), "streamlink/plugins"),
 ]
 # 缺 dist-info 会让打包版更新中心把全部组件误报"未安装"。
 for _meta in ("streamlink", "streamget", "yt-dlp", "httpx", "packaging"):
     datas += copy_metadata(_meta)
+
+# 插件 .py 是以数据文件身份被 streamlink 动态 exec 的，静态分析看不
+# 见它们内部的 import（streamlink.plugin.api / streamlink.stream.hls …），
+# 必须整包收集 streamlink 子模块进 PYZ，否则每个站点插件加载时
+# ModuleNotFoundError、全员静默判"未开播"。
+_streamlink_submodules = collect_submodules("streamlink")
 
 a = Analysis(
     ["run_qt.py"],
@@ -29,6 +43,7 @@ a = Analysis(
         "zhibo.plugins.streamget_plugin",
         "zhibo.plugins.streamlink_plugin",
         "zhibo.plugins.yt_dlp_plugin",
+        *_streamlink_submodules,
     ],
     hookspath=[],
     hooksconfig={},
