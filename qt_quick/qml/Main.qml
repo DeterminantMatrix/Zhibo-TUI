@@ -645,6 +645,8 @@ ApplicationWindow {
                             required property string configuredPlugin
                             property var qualityChoices: column === 5
                                                                  ? controller.qualityOptions(followerIndex) : []
+                            property var pluginChoices: column === 8
+                                                                ? controller.pluginOptions(followerIndex) : []
                             implicitWidth: streamModel.columnWidth(column)
                             implicitHeight: 37
                             color: followerIndex === controller.selectedFollower
@@ -653,12 +655,14 @@ ApplicationWindow {
                             border.color: controller.playingFollowers.includes(followerIndex) ? root.accent
                                          : followerIndex === controller.selectedFollower ? root.theme.tagBorder : root.theme.rowBorder
                             border.width: controller.playingFollowers.includes(followerIndex) ? 2 : 1
-                            // 保存成功后模型角色变化会重新同步画质下拉框的显示。
+                            // 保存成功后模型角色变化会重新同步下拉框的显示。
                             onConfiguredQualityChanged: if (column === 5) qualitySelector.currentIndex = qualitySelector.configuredIndex()
                             onQualityChoicesChanged: if (column === 5) qualitySelector.currentIndex = qualitySelector.configuredIndex()
+                            onConfiguredPluginChanged: if (column === 8) pluginSelector.currentIndex = pluginSelector.configuredIndex()
+                            onPluginChoicesChanged: if (column === 8) pluginSelector.currentIndex = pluginSelector.configuredIndex()
 
                             Text {
-                                visible: cell.column !== 5
+                                visible: cell.column !== 5 && cell.column !== 8
                                 anchors.fill: parent
                                 anchors.leftMargin: 9
                                 anchors.rightMargin: 5
@@ -730,9 +734,69 @@ ApplicationWindow {
                                 ToolTip.text: "当前配置：" + (cell.configuredQuality || "best")
                                               + " · " + (cell.configuredPlugin || "插件")
                             }
+                            ComboBox {
+                                id: pluginSelector
+                                objectName: cell.column === 8 ? "pluginSelector-" + cell.followerIndex : ""
+                                visible: cell.column === 8
+                                anchors.fill: parent
+                                anchors.margins: 3
+                                model: cell.pluginChoices
+                                textRole: "label"
+                                valueRole: "value"
+                                font.pixelSize: 11
+                                leftPadding: 7
+                                rightPadding: 22
+                                function configuredIndex() {
+                                    const wanted = (cell.configuredPlugin || "").toLowerCase()
+                                    for (let i = 0; i < cell.pluginChoices.length; ++i) {
+                                        if ((cell.pluginChoices[i].value || "").toLowerCase() === wanted)
+                                            return i
+                                    }
+                                    return 0
+                                }
+                                Component.onCompleted: currentIndex = configuredIndex()
+                                onActivated: function(index) {
+                                    controller.selectFollower(cell.followerIndex)
+                                    controller.setFollowerPlugin(cell.followerIndex, currentValue)
+                                    // 保存是异步的且可能失败；显示始终跟随已保存配置，
+                                    // 成功保存后 cell 的角色变化会更新显示。
+                                    currentIndex = configuredIndex()
+                                    table.forceActiveFocus()
+                                }
+                                contentItem: Text {
+                                    leftPadding: 2
+                                    rightPadding: 2
+                                    text: pluginSelector.displayText
+                                    color: cell.foreground
+                                    font.pixelSize: 11
+                                    verticalAlignment: Text.AlignVCenter
+                                    elide: Text.ElideRight
+                                }
+                                indicator: Text {
+                                    x: pluginSelector.width - width - 7
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "⌄"
+                                    color: pluginSelector.hovered ? root.accent : root.textMuted
+                                    font.pixelSize: 14
+                                }
+                                background: Rectangle {
+                                    color: pluginSelector.down ? root.theme.buttonPressed
+                                         : pluginSelector.hovered ? root.theme.buttonHover : "transparent"
+                                    border.color: pluginSelector.activeFocus ? root.accent
+                                                : pluginSelector.hovered ? root.lineBright : "transparent"
+                                    radius: 5
+                                }
+                                popup.background: Rectangle {
+                                    color: root.bg1
+                                    border.color: root.lineBright
+                                    radius: 6
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "切换主插件；画质会按新插件自动换算，备用插件列表会去掉新主插件"
+                            }
                             MouseArea {
                                 anchors.fill: parent
-                                acceptedButtons: cell.column === 5
+                                acceptedButtons: cell.column === 5 || cell.column === 8
                                                  ? Qt.RightButton
                                                  : Qt.LeftButton | Qt.RightButton
                                 onPressed: function(mouse) {
@@ -745,8 +809,8 @@ ApplicationWindow {
                                 }
                                 onDoubleClicked: function(mouse) {
                                     // 双击 = 主操作（播放），与音乐/视频类软件一致；
-                                    // 画质列排除，避免和下拉框抢事件。
-                                    if (mouse.button === Qt.LeftButton && cell.column !== 5) {
+                                    // 画质/插件列排除，避免和下拉框抢事件。
+                                    if (mouse.button === Qt.LeftButton && cell.column !== 5 && cell.column !== 8) {
                                         controller.selectFollower(cell.followerIndex)
                                         controller.action("play")
                                     }

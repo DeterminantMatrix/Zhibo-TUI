@@ -22,6 +22,7 @@ from zhibo.config import (
 )
 from zhibo.import_preview import ImportPreviewService
 from zhibo.monitor import FollowerStatus, MonitorService, StatusHistoryEntry
+from zhibo.plugins import get_plugin
 from zhibo.plugins.bounded_executor import shutdown_plugin_workers
 from zhibo.proxy_config import PROXY_PLATFORMS, normalize_proxy_value, proxy_for_platform, set_platform_proxies
 from zhibo.quality_options import normalize_quality_choice, quality_for_plugin
@@ -168,6 +169,9 @@ class QuickMonitorThread:
 
     def set_quality(self, follower_index: int, quality: str) -> None:
         self._schedule(lambda: self._set_quality(follower_index, quality))
+
+    def set_plugin(self, follower_index: int, plugin: str) -> None:
+        self._schedule(lambda: self._set_plugin(follower_index, plugin))
 
     def toggle_enabled(self, follower_index: int) -> None:
         self._schedule(lambda: self._toggle_enabled(follower_index))
@@ -589,6 +593,54 @@ class QuickMonitorThread:
             if self._service is not None:
                 self._emit_snapshot()
             self._finish("quality", False, str(exc))
+
+    async def _set_plugin(self, follower_index: int, plugin: str) -> None:
+        try:
+            service = self._service_or_error()
+            status = service.followers.get(follower_index)
+            if status is None:
+                raise ValueError("选中的直播间已不存在")
+            if service.is_polling or status.is_checking:
+                raise ValueError("状态检测进行中，请在本轮结束后选择插件")
+            current = status.follower
+            selected = str(plugin or "").strip()
+            if not selected or get_plugin(selected) is None:
+                raise ValueError(f"未知插件: {selected or '(空)'}")
+            if (current.plugin or "").casefold() == selected.casefold():
+                self._finish("plugin", True, f"{current.name} 已使用 {selected} 插件", {"plugin": selected})
+                return
+            # 与编辑确认页同规则：画质按插件家族换算，备用列表去掉新主插件。
+            normalized_quality = quality_for_plugin(
+                current.quality,
+                source_plugin=current.plugin,
+                target_plugin=selected,
+                platform=current.platform,
+            )
+            fallbacks = [
+                name for name in (current.fallback_plugins or [])
+                if name.casefold() != selected.casefold()
+            ]
+            persisted = await asyncio.to_thread(
+                service.config_manager.update_follower,
+                follower_index,
+                {"plugin": selected, "quality": normalized_quality, "fallback_plugins": fallbacks},
+                expected_key=follower_key(current),
+                expected_follower=copy.deepcopy(current),
+            )
+            updated = persisted.follower
+            service.cfg.followers[follower_index] = updated
+            status.follower = updated
+            self._emit_snapshot()
+            self._finish(
+                "plugin",
+                True,
+                f"已将 {updated.name} 的主插件切换为 {selected}，画质按新插件换算为 {updated.quality}",
+                {"plugin": selected, "quality": updated.quality},
+            )
+        except Exception as exc:
+            if self._service is not None:
+                self._emit_snapshot()
+            self._finish("plugin", False, str(exc))
 
     async def _toggle_enabled(self, follower_index: int) -> None:
         try:

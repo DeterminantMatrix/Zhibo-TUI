@@ -1699,3 +1699,56 @@ def test_quick_worker_haixing_is_an_allowed_update_target():
 
     source = inspect.getsource(worker_module.QuickMonitorThread._run_update)
     assert '"haixing"' in source
+
+
+def test_quick_worker_set_plugin_persists_with_quality_translation(tmp_path):
+    from zhibo.plugins import discover_plugins, get_plugin
+
+    discover_plugins()
+    path = tmp_path / "followers.csv"
+    manager = ConfigManager(path)
+    manager.write_followers_csv(
+        [Follower(
+            name="测试频道", plugin="streamlink", platform="twitch",
+            url="https://www.twitch.tv/ben_", quality="1080p",
+            fallback_plugins=["streamget"],
+        )]
+    )
+    worker = QuickMonitorThread(str(path))
+    worker._service = MonitorService(str(path))
+
+    results: list[tuple[str, bool, str]] = []
+    worker.bridge.operationFinished.connect(
+        lambda kind, ok, msg, payload: results.append((kind, ok, msg))
+    )
+    asyncio.run(worker._set_plugin(0, "streamget"))
+    assert results and results[0][:2] == ("plugin", True), f"set_plugin 结果: {results}"
+
+    updated = worker._service.cfg.followers[0]
+    assert updated.plugin == "streamget"
+    # 画质按新插件家族换算：streamlink 1080p → streamget UHD。
+    assert updated.quality == "UHD"
+    # 备用列表去掉新主插件。
+    assert updated.fallback_plugins == []
+    assert get_plugin("streamget") is not None
+
+
+def test_quick_worker_set_plugin_rejects_unknown_plugin(tmp_path):
+    from zhibo.plugins import discover_plugins
+
+    discover_plugins()
+    path = tmp_path / "followers.csv"
+    ConfigManager(path).write_followers_csv(
+        [Follower(name="测试", plugin="streamlink", platform="twitch", url="https://www.twitch.tv/ben_")]
+    )
+    worker = QuickMonitorThread(str(path))
+    worker._service = MonitorService(str(path))
+
+    results: list[tuple[str, bool]] = []
+    worker.bridge.operationFinished.connect(
+        lambda kind, ok, msg, payload: results.append((kind, ok))
+    )
+    asyncio.run(worker._set_plugin(0, "不存在的插件"))
+
+    assert results == [("plugin", False)]
+    assert worker._service.cfg.followers[0].plugin == "streamlink"

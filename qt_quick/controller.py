@@ -527,6 +527,27 @@ class QuickController(QObject):
             return
         self.monitor.set_quality(follower_index, quality)
 
+    @Slot(int, result="QVariantList")
+    def pluginOptions(self, follower_index: int):
+        from zhibo.plugins import list_plugins
+
+        options = [{"label": name, "value": name} for name in list_plugins()]
+        row = next(
+            (item for item in self._snapshot.get("rows", []) if int(item.get("idx", -1)) == follower_index),
+            None,
+        )
+        current = str((row or {}).get("configured_plugin") or (row or {}).get("plugin") or "").strip()
+        if current and current not in {item["value"] for item in options}:
+            # 配置里的插件不在注册表（如插件改名）：保留显示，避免下拉空选。
+            options.insert(0, {"label": f"{current}（当前）", "value": current})
+        return options
+
+    @Slot(int, str)
+    def setFollowerPlugin(self, follower_index: int, plugin: str) -> None:
+        if follower_index < 0:
+            return
+        self.monitor.set_plugin(follower_index, plugin)
+
     @Slot(str)
     def action(self, name: str) -> None:
         actions = {

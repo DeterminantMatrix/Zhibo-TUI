@@ -17,7 +17,14 @@ class FakePlugin(LiveStreamPlugin):
 
 class TestPluginRegistry:
     def setup_method(self):
+        # 清空前保存，结束后恢复：注册表是模块级全局，清空不恢复会
+        # 污染后续依赖真实插件的测试（如 worker 的插件切换用例）。
+        self._previous_plugins = dict(_plugins)
         _plugins.clear()
+
+    def teardown_method(self):
+        _plugins.clear()
+        _plugins.update(getattr(self, "_previous_plugins", {}))
 
     def test_register_and_get(self):
         plugin = FakePlugin()
